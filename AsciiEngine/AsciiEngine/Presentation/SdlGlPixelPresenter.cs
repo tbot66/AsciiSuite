@@ -34,6 +34,14 @@ namespace AsciiEngine
         private bool _mouseLeftDown;
         private bool _mouseLeftPressed;
         private bool _mouseLeftReleased;
+        private bool _mouseRightDown;
+        private bool _mouseRightPressed;
+        private bool _mouseRightReleased;
+        private bool _mouseMiddleDown;
+        private bool _mouseMiddlePressed;
+        private bool _mouseMiddleReleased;
+        private int _mouseWheelDelta;
+        private bool _hasFocus = true;
 
         public SdlGlPixelPresenter(string title = "AsciiEngine")
         {
@@ -96,6 +104,7 @@ namespace AsciiEngine
             if (!_initialized)
                 Initialize(src);
 
+            _inputSink = input;
             PumpEvents();
 
             SDL.SDL_GetWindowSize(_window, out int windowW, out int windowH);
@@ -110,10 +119,20 @@ namespace AsciiEngine
             sx = Math.Clamp(sx, 0, Math.Max(0, src.Width - 1));
             sy = Math.Clamp(sy, 0, Math.Max(0, src.Height - 1));
 
-            input.SetMouseState(sx, sy, _mouseLeftDown, _mouseLeftPressed, _mouseLeftReleased);
+            input.SetMouseState(
+                sx, sy,
+                _mouseLeftDown, _mouseLeftPressed, _mouseLeftReleased,
+                _mouseRightDown, _mouseRightPressed, _mouseRightReleased,
+                _mouseMiddleDown, _mouseMiddlePressed, _mouseMiddleReleased,
+                _mouseWheelDelta);
 
             _mouseLeftPressed = false;
             _mouseLeftReleased = false;
+            _mouseRightPressed = false;
+            _mouseRightReleased = false;
+            _mouseMiddlePressed = false;
+            _mouseMiddleReleased = false;
+            _mouseWheelDelta = 0;
         }
 
         private void Initialize(PixelRenderer src)
@@ -227,6 +246,20 @@ namespace AsciiEngine
             {
                 if (e.type == SDL.SDL_EventType.SDL_QUIT)
                     QuitRequested = true;
+                else if (e.type == SDL.SDL_EventType.SDL_WINDOWEVENT)
+                {
+                    if (e.window.windowEvent == SDL.SDL_WindowEventID.SDL_WINDOWEVENT_FOCUS_GAINED)
+                    {
+                        _hasFocus = true;
+                    }
+                    else if (e.window.windowEvent == SDL.SDL_WindowEventID.SDL_WINDOWEVENT_FOCUS_LOST)
+                    {
+                        _hasFocus = false;
+                        _mouseLeftDown = false;
+                        _mouseRightDown = false;
+                        _mouseMiddleDown = false;
+                    }
+                }
                 else if (e.type == SDL.SDL_EventType.SDL_MOUSEMOTION)
                 {
                     _mouseX = e.motion.x;
@@ -241,6 +274,20 @@ namespace AsciiEngine
                         _mouseX = e.button.x;
                         _mouseY = e.button.y;
                     }
+                    else if (e.button.button == SDL.SDL_BUTTON_RIGHT)
+                    {
+                        _mouseRightDown = true;
+                        _mouseRightPressed = true;
+                        _mouseX = e.button.x;
+                        _mouseY = e.button.y;
+                    }
+                    else if (e.button.button == SDL.SDL_BUTTON_MIDDLE)
+                    {
+                        _mouseMiddleDown = true;
+                        _mouseMiddlePressed = true;
+                        _mouseX = e.button.x;
+                        _mouseY = e.button.y;
+                    }
                 }
                 else if (e.type == SDL.SDL_EventType.SDL_MOUSEBUTTONUP)
                 {
@@ -251,8 +298,134 @@ namespace AsciiEngine
                         _mouseX = e.button.x;
                         _mouseY = e.button.y;
                     }
+                    else if (e.button.button == SDL.SDL_BUTTON_RIGHT)
+                    {
+                        _mouseRightDown = false;
+                        _mouseRightReleased = true;
+                        _mouseX = e.button.x;
+                        _mouseY = e.button.y;
+                    }
+                    else if (e.button.button == SDL.SDL_BUTTON_MIDDLE)
+                    {
+                        _mouseMiddleDown = false;
+                        _mouseMiddleReleased = true;
+                        _mouseX = e.button.x;
+                        _mouseY = e.button.y;
+                    }
+                }
+                else if (e.type == SDL.SDL_EventType.SDL_MOUSEWHEEL)
+                {
+                    int wheel = e.wheel.y;
+                    if (e.wheel.direction == (uint)SDL.SDL_MouseWheelDirection.SDL_MOUSEWHEEL_FLIPPED)
+                        wheel = -wheel;
+                    _mouseWheelDelta += wheel;
+                }
+                else if (e.type == SDL.SDL_EventType.SDL_KEYDOWN)
+                {
+                    if (!_hasFocus)
+                        continue;
+
+                    if (TryMapKey(e.key.keysym.sym, out ConsoleKey key))
+                        _inputSink?.OnKeyDown(key);
+                }
+                else if (e.type == SDL.SDL_EventType.SDL_KEYUP)
+                {
+                    if (!_hasFocus)
+                        continue;
+
+                    if (TryMapKey(e.key.keysym.sym, out ConsoleKey key))
+                        _inputSink?.OnKeyUp(key);
                 }
             }
+        }
+
+        private InputState? _inputSink;
+
+        private static bool TryMapKey(SDL.SDL_Keycode keycode, out ConsoleKey key)
+        {
+            switch (keycode)
+            {
+                case SDL.SDL_Keycode.SDLK_a: key = ConsoleKey.A; return true;
+                case SDL.SDL_Keycode.SDLK_b: key = ConsoleKey.B; return true;
+                case SDL.SDL_Keycode.SDLK_c: key = ConsoleKey.C; return true;
+                case SDL.SDL_Keycode.SDLK_d: key = ConsoleKey.D; return true;
+                case SDL.SDL_Keycode.SDLK_e: key = ConsoleKey.E; return true;
+                case SDL.SDL_Keycode.SDLK_f: key = ConsoleKey.F; return true;
+                case SDL.SDL_Keycode.SDLK_g: key = ConsoleKey.G; return true;
+                case SDL.SDL_Keycode.SDLK_h: key = ConsoleKey.H; return true;
+                case SDL.SDL_Keycode.SDLK_i: key = ConsoleKey.I; return true;
+                case SDL.SDL_Keycode.SDLK_j: key = ConsoleKey.J; return true;
+                case SDL.SDL_Keycode.SDLK_k: key = ConsoleKey.K; return true;
+                case SDL.SDL_Keycode.SDLK_l: key = ConsoleKey.L; return true;
+                case SDL.SDL_Keycode.SDLK_m: key = ConsoleKey.M; return true;
+                case SDL.SDL_Keycode.SDLK_n: key = ConsoleKey.N; return true;
+                case SDL.SDL_Keycode.SDLK_o: key = ConsoleKey.O; return true;
+                case SDL.SDL_Keycode.SDLK_p: key = ConsoleKey.P; return true;
+                case SDL.SDL_Keycode.SDLK_q: key = ConsoleKey.Q; return true;
+                case SDL.SDL_Keycode.SDLK_r: key = ConsoleKey.R; return true;
+                case SDL.SDL_Keycode.SDLK_s: key = ConsoleKey.S; return true;
+                case SDL.SDL_Keycode.SDLK_t: key = ConsoleKey.T; return true;
+                case SDL.SDL_Keycode.SDLK_u: key = ConsoleKey.U; return true;
+                case SDL.SDL_Keycode.SDLK_v: key = ConsoleKey.V; return true;
+                case SDL.SDL_Keycode.SDLK_w: key = ConsoleKey.W; return true;
+                case SDL.SDL_Keycode.SDLK_x: key = ConsoleKey.X; return true;
+                case SDL.SDL_Keycode.SDLK_y: key = ConsoleKey.Y; return true;
+                case SDL.SDL_Keycode.SDLK_z: key = ConsoleKey.Z; return true;
+
+                case SDL.SDL_Keycode.SDLK_0: key = ConsoleKey.D0; return true;
+                case SDL.SDL_Keycode.SDLK_1: key = ConsoleKey.D1; return true;
+                case SDL.SDL_Keycode.SDLK_2: key = ConsoleKey.D2; return true;
+                case SDL.SDL_Keycode.SDLK_3: key = ConsoleKey.D3; return true;
+                case SDL.SDL_Keycode.SDLK_4: key = ConsoleKey.D4; return true;
+                case SDL.SDL_Keycode.SDLK_5: key = ConsoleKey.D5; return true;
+                case SDL.SDL_Keycode.SDLK_6: key = ConsoleKey.D6; return true;
+                case SDL.SDL_Keycode.SDLK_7: key = ConsoleKey.D7; return true;
+                case SDL.SDL_Keycode.SDLK_8: key = ConsoleKey.D8; return true;
+                case SDL.SDL_Keycode.SDLK_9: key = ConsoleKey.D9; return true;
+
+                case SDL.SDL_Keycode.SDLK_KP_0: key = ConsoleKey.NumPad0; return true;
+                case SDL.SDL_Keycode.SDLK_KP_1: key = ConsoleKey.NumPad1; return true;
+                case SDL.SDL_Keycode.SDLK_KP_2: key = ConsoleKey.NumPad2; return true;
+                case SDL.SDL_Keycode.SDLK_KP_3: key = ConsoleKey.NumPad3; return true;
+                case SDL.SDL_Keycode.SDLK_KP_4: key = ConsoleKey.NumPad4; return true;
+                case SDL.SDL_Keycode.SDLK_KP_5: key = ConsoleKey.NumPad5; return true;
+                case SDL.SDL_Keycode.SDLK_KP_6: key = ConsoleKey.NumPad6; return true;
+                case SDL.SDL_Keycode.SDLK_KP_7: key = ConsoleKey.NumPad7; return true;
+                case SDL.SDL_Keycode.SDLK_KP_8: key = ConsoleKey.NumPad8; return true;
+                case SDL.SDL_Keycode.SDLK_KP_9: key = ConsoleKey.NumPad9; return true;
+                case SDL.SDL_Keycode.SDLK_KP_PLUS: key = ConsoleKey.Add; return true;
+                case SDL.SDL_Keycode.SDLK_KP_MINUS: key = ConsoleKey.Subtract; return true;
+
+                case SDL.SDL_Keycode.SDLK_LEFT: key = ConsoleKey.LeftArrow; return true;
+                case SDL.SDL_Keycode.SDLK_RIGHT: key = ConsoleKey.RightArrow; return true;
+                case SDL.SDL_Keycode.SDLK_UP: key = ConsoleKey.UpArrow; return true;
+                case SDL.SDL_Keycode.SDLK_DOWN: key = ConsoleKey.DownArrow; return true;
+
+                case SDL.SDL_Keycode.SDLK_ESCAPE: key = ConsoleKey.Escape; return true;
+                case SDL.SDL_Keycode.SDLK_RETURN: key = ConsoleKey.Enter; return true;
+                case SDL.SDL_Keycode.SDLK_BACKSPACE: key = ConsoleKey.Backspace; return true;
+                case SDL.SDL_Keycode.SDLK_TAB: key = ConsoleKey.Tab; return true;
+                case SDL.SDL_Keycode.SDLK_SPACE: key = ConsoleKey.Spacebar; return true;
+
+                case SDL.SDL_Keycode.SDLK_EQUALS: key = ConsoleKey.OemPlus; return true;
+                case SDL.SDL_Keycode.SDLK_MINUS: key = ConsoleKey.OemMinus; return true;
+
+                case SDL.SDL_Keycode.SDLK_F1: key = ConsoleKey.F1; return true;
+                case SDL.SDL_Keycode.SDLK_F2: key = ConsoleKey.F2; return true;
+                case SDL.SDL_Keycode.SDLK_F3: key = ConsoleKey.F3; return true;
+                case SDL.SDL_Keycode.SDLK_F4: key = ConsoleKey.F4; return true;
+                case SDL.SDL_Keycode.SDLK_F5: key = ConsoleKey.F5; return true;
+                case SDL.SDL_Keycode.SDLK_F6: key = ConsoleKey.F6; return true;
+                case SDL.SDL_Keycode.SDLK_F7: key = ConsoleKey.F7; return true;
+                case SDL.SDL_Keycode.SDLK_F8: key = ConsoleKey.F8; return true;
+                case SDL.SDL_Keycode.SDLK_F9: key = ConsoleKey.F9; return true;
+                case SDL.SDL_Keycode.SDLK_F10: key = ConsoleKey.F10; return true;
+                case SDL.SDL_Keycode.SDLK_F11: key = ConsoleKey.F11; return true;
+                case SDL.SDL_Keycode.SDLK_F12: key = ConsoleKey.F12; return true;
+            }
+
+            key = default;
+            return false;
         }
 
         private static int CreateProgram(string vertexSource, string fragmentSource)

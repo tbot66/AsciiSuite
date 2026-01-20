@@ -19,6 +19,8 @@ namespace SolarSystemApp
         private const double DebrisSpan = 32.0;
         private const double DebrisMaxV = 0.22;
         private const double BlackHoleChanceFallback = 0.12;
+        private const int PlanetTextureSize = 256;
+        private const double SunCacheInterval = 0.18;
 
         private readonly Galaxy _galaxy = new Galaxy();
         private StarSystem? _sys;
@@ -74,11 +76,33 @@ namespace SolarSystemApp
         private readonly EventLog _events = new EventLog(10);
         private readonly PixelFont _font = new PixelFont();
 
+        private readonly Dictionary<int, PlanetTextureCache> _planetTextureCache = new Dictionary<int, PlanetTextureCache>(64);
+        private SunTextureCache? _sunCache;
+
         private struct StarPt
         {
             public double WX;
             public double WY;
             public double Depth;
+        }
+
+        private sealed class PlanetTextureCache
+        {
+            public int Seed;
+            public PlanetDrawer.PlanetTexture Texture;
+            public Color[] BaseColors = Array.Empty<Color>();
+            public Color[] EmissiveColors = Array.Empty<Color>();
+            public float[] EmissiveStrength = Array.Empty<float>();
+        }
+
+        private sealed class SunTextureCache
+        {
+            public int SunRadius;
+            public int CoronaRadius;
+            public int Size;
+            public Color[] Colors = Array.Empty<Color>();
+            public byte[] Mask = Array.Empty<byte>();
+            public double LastUpdateTime;
         }
 
         private struct DebrisPt
@@ -575,14 +599,33 @@ namespace SolarSystemApp
 
             int cx = WorldToScreenX(0.0);
             int cy = WorldToScreenY(0.0);
-            int radius = Math.Max(2, (int)Math.Round(_sys.SunRadiusWorld * _worldToScreen));
-            int corona = Math.Max(radius + 2, (int)Math.Round(_sys.CoronaRadiusWorld * _worldToScreen));
+            int sunR = MathUtil.ClampInt((int)Math.Round(_sys.SunRadiusWorld * _worldToScreen), 2, 140);
+            int coronaThickness = MathUtil.ClampInt((int)Math.Round(sunR * 0.28), 2, 18);
+            int coronaR = MathUtil.ClampInt(sunR + coronaThickness, sunR + 2, 180);
 
-            Color sunColor = ColorUtils.ToRgbColor((Color)_sys.SunColor);
-            Color coronaColor = ColorUtils.Shade(sunColor, 0.35);
+            SunTextureCache cache = GetSunCache(sunR, coronaR, _simTime);
 
-            renderer.DrawCircle(cx, cy, corona, coronaColor);
-            renderer.FillCircle(cx, cy, radius, sunColor);
+            int size = cache.Size;
+            int radius = cache.CoronaRadius;
+            int offset = radius;
+
+            int x0 = cx - offset;
+            int y0 = cy - offset;
+
+            int idx = 0;
+            for (int y = 0; y < size; y++)
+            {
+                int py = y0 + y;
+                for (int x = 0; x < size; x++)
+                {
+                    if (cache.Mask[idx] != 0)
+                    {
+                        int px = x0 + x;
+                        renderer.SetPixel(px, py, cache.Colors[idx]);
+                    }
+                    idx++;
+                }
+            }
         }
 
         private void DrawBlackHole(PixelRenderer renderer)
@@ -659,12 +702,12 @@ namespace SolarSystemApp
             for (int i = 0; i < _sys.Planets.Count; i++)
             {
                 Planet planet = _sys.Planets[i];
-                DrawBody(renderer, planet.WX, planet.WY, planet.RadiusWorld, planet.Fg, planet.Name, SelectionKind.Planet, i, -1, planet.HasRings);
+                DrawPlanetBody(renderer, planet);
 
                 for (int m = 0; m < planet.Moons.Count; m++)
                 {
                     Moon moon = planet.Moons[m];
-                    DrawBody(renderer, moon.WX, moon.WY, moon.RadiusWorld, moon.Fg, moon.Name, SelectionKind.Moon, i, m, false);
+                    DrawMoonBody(renderer, moon);
                 }
             }
         }
@@ -906,23 +949,76 @@ namespace SolarSystemApp
             }
         }
 
-        private void DrawBody(PixelRenderer renderer, double wx, double wy, double radiusWorld, AnsiColor colorAnsi, string label, SelectionKind kind, int index, int subIndex, bool rings)
+        private void DrawPlanetBody(PixelRenderer renderer, Planet planet)
+        {
+            int seed = _sys == null ? 0 : _sys.Seed ^ (planet.Name?.GetHashCode() ?? 0);
+            DrawTexturedBody(renderer,
+                planet.WX, planet.WY, planet.RadiusWorld,
+                planet.Name,
+                planet.HasRings,
+                planet.Texture,
+                seed,
+                planet.SpinSpeed,
+                planet.AxisTilt);
+        }
+
+        private void DrawMoonBody(PixelRenderer renderer, Moon moon)
+        {
+            int seed = _sys == null ? 0 : _sys.Seed ^ (moon.Name?.GetHashCode() ?? 0);
+            DrawTexturedBody(renderer,
+                moon.WX, moon.WY, moon.RadiusWorld,
+                moon.Name,
+                false,
+                moon.Texture,
+                seed,
+                moon.SpinSpeed,
+                axisTilt: 0.0);
+        }
+
+        private void DrawTexturedBody(
+            PixelRenderer renderer,
+            double wx,
+            double wy,
+            double radiusWorld,
+            string label,
+            bool rings,
+            PlanetDrawer.PlanetTexture texture,
+            int seed,
+            double spinSpeed,
+            double axisTilt)
         {
             int cx = WorldToScreenX(wx);
             int cy = WorldToScreenY(wy);
             int r = Math.Max(1, (int)Math.Round(radiusWorld * _worldToScreen));
-            Color baseColor = ColorUtils.ToRgbColor((Color)colorAnsi);
+            if (r <= 0)
+                return;
 
-            DrawShadedCircle(renderer, cx, cy, r, baseColor, wx, wy);
+            PlanetTextureCache cache = GetPlanetTextureCache(seed, texture);
+            double spinTurns = (_simTime * spinSpeed) / (Math.PI * 2.0);
+
+            DrawTexturedSphere(renderer, cx, cy, r, wx, wy, spinTurns, axisTilt, cache);
 
             if (rings)
-                DrawRings(renderer, cx, cy, r + 3, r + 6, ColorUtils.Shade(baseColor, 0.5));
+            {
+                int mid = (PlanetTextureSize / 2) * PlanetTextureSize + (PlanetTextureSize / 2);
+                Color ringColor = ColorUtils.Shade(cache.BaseColors[mid], 0.5);
+                DrawRings(renderer, cx, cy, r + 3, r + 6, ringColor);
+            }
 
             if (_showLabels)
                 DrawText(renderer, cx + r + 2, cy - r - 2, label, Colors.BrightWhite);
         }
 
-        private void DrawShadedCircle(PixelRenderer renderer, int cx, int cy, int r, Color baseColor, double wx, double wy)
+        private void DrawTexturedSphere(
+            PixelRenderer renderer,
+            int cx,
+            int cy,
+            int r,
+            double wx,
+            double wy,
+            double spinTurns,
+            double axisTilt,
+            PlanetTextureCache cache)
         {
             if (r <= 0)
                 return;
@@ -938,7 +1034,13 @@ namespace SolarSystemApp
                 lz /= len;
             }
 
+            double ct = Math.Cos(axisTilt);
+            double st = Math.Sin(axisTilt);
+            bool hasTilt = Math.Abs(axisTilt) > 1e-6;
+
             int rr = r * r;
+            double invR = 1.0 / r;
+
             for (int y = -r; y <= r; y++)
             {
                 int yy = y * y;
@@ -948,13 +1050,44 @@ namespace SolarSystemApp
                     if (d2 > rr)
                         continue;
 
-                    double nx = x / (double)r;
-                    double ny = y / (double)r;
+                    double nx = x * invR;
+                    double ny = y * invR;
                     double nz = Math.Sqrt(Math.Max(0.0, 1.0 - nx * nx - ny * ny));
-                    double dot = Math.Max(0.0, nx * lx + ny * ly + nz * lz);
-                    double shade = 0.2 + 0.8 * dot;
-                    Color c = ColorUtils.Shade(baseColor, shade);
-                    renderer.SetPixel(cx + x, cy + y, c);
+
+                    double tx = nx;
+                    double ty = ny;
+                    double tz = nz;
+                    if (hasTilt)
+                    {
+                        double x2 = tx * ct - ty * st;
+                        double y2 = tx * st + ty * ct;
+                        tx = x2;
+                        ty = y2;
+                    }
+
+                    double lon = Math.Atan2(tx, tz);
+                    double u = lon / (Math.PI * 2.0) + 0.5 + spinTurns;
+                    double v = Math.Asin(MathUtil.Clamp(ty, -1.0, 1.0)) / Math.PI + 0.5;
+
+                    SamplePlanetTexture(cache, u, v, out Color baseColor, out float emissive, out Color emissiveColor);
+
+                    double ndotlRaw = nx * lx + ny * ly + nz * lz;
+                    double ndotl = ndotlRaw;
+                    if (ndotl < 0.0) ndotl = 0.0;
+                    double limb = 0.78 + 0.22 * nz;
+                    double light = MathUtil.Clamp(ndotl * limb, 0.0, 1.0);
+
+                    Color shaded = ColorUtils.Shade(baseColor, light);
+
+                    if (emissive > 0.0001f)
+                    {
+                        double night = MathUtil.Clamp((0.22 - ndotlRaw) / 0.70, 0.0, 1.0);
+                        double e = emissive * night;
+                        if (e > 0.0001)
+                            shaded = BlendRgb(shaded, emissiveColor, MathUtil.Clamp(e, 0.0, 0.85));
+                    }
+
+                    renderer.SetPixel(cx + x, cy + y, shaded);
                 }
             }
         }
@@ -976,6 +1109,236 @@ namespace SolarSystemApp
                 renderer.DrawLine(px0, py0, px1, py1, color);
             }
         }
+
+        private PlanetTextureCache GetPlanetTextureCache(int seed, PlanetDrawer.PlanetTexture texture)
+        {
+            int key = unchecked(seed * 397) ^ ((int)texture << 16) ^ PlanetTextureSize;
+            if (_planetTextureCache.TryGetValue(key, out PlanetTextureCache cache))
+                return cache;
+
+            cache = BuildPlanetTextureCache(seed, texture);
+            _planetTextureCache[key] = cache;
+            return cache;
+        }
+
+        private PlanetTextureCache BuildPlanetTextureCache(int seed, PlanetDrawer.PlanetTexture texture)
+        {
+            int size = PlanetTextureSize;
+            int total = size * size;
+
+            PlanetTextureCache cache = new PlanetTextureCache
+            {
+                Seed = seed,
+                Texture = texture,
+                BaseColors = new Color[total],
+                EmissiveColors = new Color[total],
+                EmissiveStrength = new float[total]
+            };
+
+            double invSize = 1.0 / size;
+
+            int idx = 0;
+            for (int y = 0; y < size; y++)
+            {
+                double v = (y + 0.5) * invSize;
+                double lat = (v - 0.5) * Math.PI;
+                double sinLat = Math.Sin(lat);
+                double cosLat = Math.Cos(lat);
+
+                for (int x = 0; x < size; x++)
+                {
+                    double u = (x + 0.5) * invSize;
+                    double lon = (u - 0.5) * Math.PI * 2.0;
+                    double sinLon = Math.Sin(lon);
+                    double cosLon = Math.Cos(lon);
+
+                    double nx = sinLon * cosLat;
+                    double ny = sinLat;
+                    double nz = cosLon * cosLat;
+
+                    PlanetDrawer.SamplePlanetSurface(seed, texture, nx, ny, nz, 0.0,
+                        out Color fg, out double emissive01, out Color emissiveColor);
+
+                    cache.BaseColors[idx] = ColorUtils.ToRgbColor(fg);
+                    cache.EmissiveColors[idx] = ColorUtils.ToRgbColor(emissiveColor);
+                    cache.EmissiveStrength[idx] = (float)emissive01;
+                    idx++;
+                }
+            }
+
+            return cache;
+        }
+
+        private static void SamplePlanetTexture(PlanetTextureCache cache, double u, double v, out Color baseColor, out float emissive, out Color emissiveColor)
+        {
+            u -= Math.Floor(u);
+            if (u < 0.0) u += 1.0;
+
+            if (v < 0.0) v = 0.0;
+            if (v > 1.0) v = 1.0;
+
+            int x = (int)(u * (PlanetTextureSize - 1));
+            int y = (int)(v * (PlanetTextureSize - 1));
+            int idx = y * PlanetTextureSize + x;
+
+            baseColor = cache.BaseColors[idx];
+            emissive = cache.EmissiveStrength[idx];
+            emissiveColor = cache.EmissiveColors[idx];
+        }
+
+        private SunTextureCache GetSunCache(int sunR, int coronaR, double time)
+        {
+            if (_sunCache == null || _sunCache.SunRadius != sunR || _sunCache.CoronaRadius != coronaR)
+            {
+                _sunCache = BuildSunCache(sunR, coronaR, time);
+                return _sunCache;
+            }
+
+            if (time - _sunCache.LastUpdateTime >= SunCacheInterval)
+                _sunCache = BuildSunCache(sunR, coronaR, time);
+
+            return _sunCache;
+        }
+
+        private SunTextureCache BuildSunCache(int sunR, int coronaR, double time)
+        {
+            SunTextureCache cache = new SunTextureCache
+            {
+                SunRadius = sunR,
+                CoronaRadius = coronaR,
+                Size = coronaR * 2 + 1,
+                LastUpdateTime = time
+            };
+
+            int size = cache.Size;
+            int total = size * size;
+            cache.Colors = new Color[total];
+            cache.Mask = new byte[total];
+
+            int seed = _sys == null ? 0 : _sys.Seed ^ 0x51A7BEEF;
+            Color sunBase = _sys == null ? Colors.BrightYellow : ColorUtils.ToRgbColor((Color)_sys.SunColor);
+
+            int sunR2 = sunR * sunR;
+            int coronaR2 = coronaR * coronaR;
+            double invBandDen = 1.0 / Math.Max(1.0, (coronaR - sunR));
+
+            int idx = 0;
+            for (int y = -coronaR; y <= coronaR; y++)
+            {
+                for (int x = -coronaR; x <= coronaR; x++)
+                {
+                    int d2i = x * x + y * y;
+                    if (d2i > coronaR2)
+                    {
+                        idx++;
+                        continue;
+                    }
+
+                    if (d2i >= sunR2)
+                    {
+                        double d = Math.Sqrt(d2i);
+                        double band = (d - sunR) * invBandDen;
+                        if (band < 0.0 || band > 1.0)
+                        {
+                            idx++;
+                            continue;
+                        }
+
+                        double edge = 1.0 - band;
+                        edge = MathUtil.Clamp(edge, 0.0, 1.0);
+
+                        double ang = Math.Atan2(y, x);
+                        double n1 = HashNoise.FBm(seed + 11,
+                            x * 0.08 + Math.Cos(ang) * 0.35,
+                            y * 0.08 + Math.Sin(ang) * 0.35 + time * 0.35,
+                            octaves: 3);
+
+                        double n2 = HashNoise.ValueNoise(seed + 33,
+                            x * 0.22 + time * 0.18,
+                            y * 0.22 - time * 0.14);
+
+                        double b = 0.10 + 0.55 * edge;
+                        b += 0.20 * (n1 - 0.5);
+                        b += 0.10 * (n2 - 0.5);
+                        b *= MathUtil.Clamp(edge * 1.15, 0.0, 1.0);
+
+                        if (b < 0.10)
+                        {
+                            idx++;
+                            continue;
+                        }
+
+                        double bb = MathUtil.Clamp(b, 0.0, 1.0);
+                        cache.Colors[idx] = ColorUtils.Shade(sunBase, bb);
+                        cache.Mask[idx] = 1;
+                        idx++;
+                        continue;
+                    }
+
+                    double dCore = Math.Sqrt(d2i);
+                    double u = x / (double)sunR;
+                    double v = y / (double)sunR;
+
+                    double tEdge = dCore / sunR;
+                    double limb = 1.0 - 0.65 * Math.Pow(tEdge, 1.25);
+
+                    double gran = HashNoise.FBm(seed + 101,
+                        u * 9.5 + time * 0.10,
+                        v * 9.5 - time * 0.08,
+                        octaves: 4);
+
+                    double angCore = Math.Atan2(v, u);
+                    double swirl = HashNoise.ValueNoise(seed + 202,
+                        Math.Cos(angCore) * 2.5 + u * 1.2 + time * 0.06,
+                        Math.Sin(angCore) * 2.5 + v * 1.2 - time * 0.05);
+
+                    double spot = 0.0;
+                    for (int s = 0; s < 3; s++)
+                    {
+                        double sx = (HashNoise.Hash01(seed + 900 + s * 31, 12, 34) * 1.2 - 0.6);
+                        double sy = (HashNoise.Hash01(seed + 900 + s * 31, 56, 78) * 1.2 - 0.6);
+                        double sr = 0.10 + 0.10 * HashNoise.Hash01(seed + 900 + s * 31, 90, 12);
+
+                        double dx = u - sx;
+                        double dy = v - sy;
+                        double dd = Math.Sqrt(dx * dx + dy * dy);
+
+                        double w = MathUtil.Clamp(1.0 - (dd / Math.Max(0.0001, sr)), 0.0, 1.0);
+                        spot = Math.Max(spot, w);
+                    }
+
+                    double bCore = 0.82 * limb;
+                    bCore += 0.22 * (gran - 0.5);
+                    bCore += 0.10 * (swirl - 0.5);
+                    bCore -= 0.55 * spot;
+
+                    double bbCore = MathUtil.Clamp(bCore, 0.0, 1.0);
+                    cache.Colors[idx] = ColorUtils.Shade(sunBase, bbCore);
+                    cache.Mask[idx] = 1;
+                    idx++;
+                }
+            }
+
+            return cache;
+        }
+
+        private static Color BlendRgb(Color a, Color b, double t)
+        {
+            t = MathUtil.Clamp(t, 0.0, 1.0);
+            if (t <= 0.0) return a;
+            if (t >= 1.0) return b;
+
+            (byte ar, byte ag, byte ab) = ColorUtils.ToRgbBytes(a);
+            (byte br, byte bg, byte bb) = ColorUtils.ToRgbBytes(b);
+
+            int rr = (int)Math.Round(ar + (br - ar) * t);
+            int gg = (int)Math.Round(ag + (bg - ag) * t);
+            int bb2 = (int)Math.Round(ab + (bb - ab) * t);
+
+            return Color.FromRgb((byte)ClampToByte(rr), (byte)ClampToByte(gg), (byte)ClampToByte(bb2));
+        }
+
+        private static int ClampToByte(int v) => (v < 0) ? 0 : (v > 255 ? 255 : v);
 
         private void EnsureStarfield()
         {
@@ -1075,6 +1438,8 @@ namespace SolarSystemApp
 
             _starSeedBuilt = int.MinValue;
             _debrisSeedBuilt = int.MinValue;
+            _planetTextureCache.Clear();
+            _sunCache = null;
 
             if (_sys != null)
             {

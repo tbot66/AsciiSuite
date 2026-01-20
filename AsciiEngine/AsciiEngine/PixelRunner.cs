@@ -35,10 +35,16 @@ namespace AsciiEngine
                     ctx.DeltaTime = dt;
                     ctx.Time += dt;
 
-                    terminal.PollInput(input);
-
-                    // SDL-specific input hook (optional)
-                    sdlPresenter?.PollInput(ctx.Renderer, input);
+                    if (sdlPresenter != null)
+                    {
+                        input.BeginFrame();
+                        sdlPresenter.PollInput(ctx.Renderer, input);
+                        input.EndFrame();
+                    }
+                    else
+                    {
+                        terminal.PollInput(input);
+                    }
 
                     app.Update(ctx);
                     app.Draw(ctx);

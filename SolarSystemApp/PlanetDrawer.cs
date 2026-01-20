@@ -698,6 +698,18 @@ namespace SolarSystemApp.World
             SamplePlanetEx(seed, tex, nx, ny, nz, spinTurns, out fg, out glyph, out _, out _);
         }
 
+        internal static void SamplePlanetSurface(
+            int seed,
+            PlanetTexture tex,
+            double nx, double ny, double nz,
+            double spinTurns,
+            out Color fg,
+            out double emissive01,
+            out Color emissiveColor)
+        {
+            SamplePlanetEx(seed, tex, nx, ny, nz, spinTurns, out fg, out _, out emissive01, out emissiveColor);
+        }
+
         private static void SamplePlanetEx(
             int seed,
             PlanetTexture tex,
