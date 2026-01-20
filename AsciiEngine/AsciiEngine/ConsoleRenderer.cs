@@ -19,6 +19,10 @@ namespace AsciiEngine
 
         private readonly StringBuilder _sb = new StringBuilder(16384);
 
+        internal ReadOnlySpan<char> Chars => _chars;
+        internal ReadOnlySpan<Color> Foreground => _fg;
+        internal ReadOnlySpan<Color> Background => _bg;
+
         public ConsoleRenderer(int w, int h)
         {
             Resize(w, h);
