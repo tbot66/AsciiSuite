@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Diagnostics;
 using System.Threading;
 using System.Text;
@@ -105,6 +105,8 @@ namespace AsciiEngine
 
         public void PollInput(InputState input)
         {
+            input.BeginFrame();
+
             try
             {
                 while (Console.KeyAvailable)
@@ -114,16 +116,18 @@ namespace AsciiEngine
                     if (key == ConsoleKey.Escape)
                     {
                         ExitRequested = true;
-                        input.RequestQuit();
+                        break;
                     }
 
-                    input.OnKeyPressed(key);
+                    input.OnKey(key);
                 }
             }
             catch
             {
                 // If input is redirected / unavailable, just behave like "no input this frame".
             }
+
+            input.EndFrame();
         }
 
         public void SleepToMaintainFps(int fps)
