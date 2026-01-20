@@ -1352,6 +1352,7 @@ namespace SolarSystemApp
 
             for (int y = -box; y <= box; y++)
             {
+                int py = cy + y;
                 for (int x = -box; x <= box; x++)
                 {
                     int px = cx + x;
