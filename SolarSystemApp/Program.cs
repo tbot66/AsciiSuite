@@ -14,13 +14,6 @@ internal static class Program
             return;
         }
 
-        if (HasFlag(args, "--pixeldemo"))
-        {
-            Diagnostics.Log("[SolarSystem] Pixel app: PixelDemoScene.");
-            RunPixelGame(new PixelDemoScene(), "Pixel Demo");
-            return;
-        }
-
         if (HasFlag(args, "--pixeltest") || HasFlag(args, "--pixel-tests"))
         {
             Diagnostics.Log("[SolarSystem] Pixel app: PixelRenderTests.");

@@ -24,6 +24,8 @@ namespace AsciiEngine
 
                 app.Init(ctx);
 
+                var sdlPresenter = presenter as SdlGlPixelPresenter;
+
                 while (!terminal.ExitRequested)
                 {
                     double dt;
@@ -34,20 +36,22 @@ namespace AsciiEngine
                     ctx.Time += dt;
 
                     terminal.PollInput(input);
-                    if (presenter is SdlGlPixelPresenter sdlPresenter)
-                        sdlPresenter.PollInput(ctx.Renderer, input);
+
+                    // SDL-specific input hook (optional)
+                    sdlPresenter?.PollInput(ctx.Renderer, input);
 
                     app.Update(ctx);
                     app.Draw(ctx);
 
                     presenter.Present(ctx.Renderer);
 
-                    if (presenter is SdlGlPixelPresenter sdlPresenter && sdlPresenter.QuitRequested)
+                    if (sdlPresenter?.QuitRequested == true)
                         break;
 
                     if (capFps)
                         terminal.SleepToMaintainFps(fpsCap);
                 }
+
             }
             finally
             {
