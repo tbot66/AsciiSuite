@@ -5,28 +5,29 @@ namespace SolarSystemApp.Interiors
 {
     internal static class ShipInteriorFactory
     {
+        private const char BLANK = '\u0001';
         // Ship models are full ASCII layouts. Blank characters are walkable; █ are walls.
         private static readonly string[] SHIP_MODEL_ATLAS =
         {
             @"                             ██",
             @"                             ██",
             @"                             ██",
-            @"                           ██████",
+            @"                          ████████",
             @"                         ██      ██",
             @"                        ███      ███",
-            @"                        ██        ██",
+            @"                       ███        ███",
             @"                      ██            ██ ",
             @"                     ███            ███",
-            @"                     ██              ██",
+            @"                    ███              ███",
             @"                   ██                  ██ ",
             @"                  ███__________________███",
-            @"                  ██      ¿             ██",
+            @"                 ███      ¿             ███",
             @"                ██\    ¡ __________  ┌┌┌ /██",
             @"                ██ \   /            \   / ██",
             @"               ███  \ |    ______    | /  ███",
             @"               ███   |    ┌| nav|┐    |   ███",
             @"               ███   |   {└-╔--╗-┘}   |   ███",
-            @"               ███   |    ]_|  |_[    |   ███",
+            @"              ████   |    ]_|  |_[    |   ████",
             @"             ██\  \  |                |  /  /██",
             @"             ██ \  \ |                | /  / ██",
             @"             ██  \__\|      _▓▓_      |/__/  ██",
@@ -60,19 +61,19 @@ namespace SolarSystemApp.Interiors
             @"              ████  ____________________  ████",
             @"               ███ /     / ______ \     \ ███",
             @"               ███/     / ________ \     \███",
-            @"                  ██████  ________  ██████",
+            @"                 ███████  ________  ███████",
             @"                   █████ /  ____  \ █████",
             @"                    ████/  /____\  \████",
+            @"                       ████═|__|═████",
             @"                        ███═|__|═███",
-            @"                        ███═|__|═███",
-            @"                        ███═|__|═███",
-            @"                      ██\___|__|┌__/██ ",
+            @"                       ████═|__|═████",
+            @"                      ██\___|__|┌__/███",
             @"                     ███|▄▄       |/  █",
             @"                     ███|▒▒     └ ■╗/|█",
             @"                     ███|       └ ■╝\|█",
             @"                     ███|_________|\  █",
-            @"                      ██/ ,, =-=   \██ ",
-            @"                        ████████████",
+            @"                      ██/ ,, =-=   \███",
+            @"                       ██████████████",
             @"                           ██████",
             @"                            ████"
         };
@@ -86,22 +87,30 @@ namespace SolarSystemApp.Interiors
         // =========================
         // PUBLIC ENTRY POINT (KEEP)
         // =========================
-        public static InteriorSession Create(int seed, string shipName, int w = 120, int h = 50)
+        public static InteriorSession Create(int seed, string shipName, int w = 240, int h = 100)
         {
             var rng = new Random(seed ^ (shipName?.GetHashCode() ?? 0));
-            var m = new InteriorMap(w, h, InteriorMap.VOID);
 
-            if (!string.IsNullOrWhiteSpace(shipName) && SHIP_MODELS.TryGetValue(shipName.Trim(), out var exactModel))
-            {
-                StampShipCentered(m, exactModel, out int sx, out int sy);
-                return new InteriorSession(shipName, m, sx, sy);
-            }
+            // pick model first (same logic as you already have)
+            string[] model =
+                (!string.IsNullOrWhiteSpace(shipName) && SHIP_MODELS.TryGetValue(shipName.Trim(), out var exact))
+                    ? exact
+                    : (PickRandomModel(rng) ?? SHIP_MODEL_ATLAS);
 
-            var model = PickRandomModel(rng) ?? SHIP_MODEL_ATLAS;
+            // compute needed size (+padding so flood fill and borders are safe)
+            int mw = ModelWidth(model);
+            int mh = model.Length;
+            const int pad = 6;
+
+            int mapW = Math.Max(w, mw + pad * 2);
+            int mapH = Math.Max(h, mh + pad * 2);
+
+            var m = new InteriorMap(mapW, mapH, InteriorMap.VOID);
+
             StampShipCentered(m, model, out int spawnX, out int spawnY);
-
             return new InteriorSession(shipName, m, spawnX, spawnY);
         }
+
 
         private static string[] PickRandomModel(Random rng)
         {
@@ -118,16 +127,29 @@ namespace SolarSystemApp.Interiors
             return SHIP_MODEL_ATLAS;
         }
 
+
+
         private static void StampShipCentered(InteriorMap m, string[] model, out int spawnX, out int spawnY)
         {
             int mw = ModelWidth(model);
             int mh = model.Length;
 
+            if (mw > m.W || mh > m.H)
+            {
+                throw new InvalidOperationException(
+                    $"Ship model does not fit: model={mw}x{mh}, map={m.W}x{m.H}. Increase map size.");
+            }
+
             int ox = (m.W / 2) - (mw / 2);
             int oy = (m.H / 2) - (mh / 2);
 
             StampShip(m, model, ox, oy);
-            ClearExteriorSpaces(m);
+
+            // Flood-fill OUTSIDE through BLANK only
+            ClearExteriorBlanks(m);
+
+            // Anything BLANK that survived is inside the hull -> become FLOOR
+            FillInteriorBlanks(m);
 
             int cx = ox + mw / 2;
             int cy = oy + mh / 2;
@@ -162,52 +184,71 @@ namespace SolarSystemApp.Interiors
                 for (int x = 0; x < mw; x++)
                 {
                     char c = GetModelChar(model, x, y);
+                    if (c == '\0') continue; // outside row -> do nothing
+
                     int wx = ox + x;
                     int wy = oy + y;
 
                     if (!m.InBounds(wx, wy)) continue;
 
-                    m.Set(wx, wy, c == '\0' ? InteriorMap.FLOOR : c);
+                    // Spaces become BLANK (will become FLOOR only if enclosed by hull)
+                    if (c == InteriorMap.FLOOR) c = BLANK;
+
+                    m.Set(wx, wy, c);
                 }
             }
         }
 
-        private static void ClearExteriorSpaces(InteriorMap m)
+        private static void ClearExteriorBlanks(InteriorMap m)
         {
             var queue = new Queue<(int x, int y)>();
 
             for (int x = 0; x < m.W; x++)
             {
-                TryQueueExterior(m, queue, x, 0);
-                TryQueueExterior(m, queue, x, m.H - 1);
+                TryQueueExteriorBlank(m, queue, x, 0);
+                TryQueueExteriorBlank(m, queue, x, m.H - 1);
             }
 
             for (int y = 0; y < m.H; y++)
             {
-                TryQueueExterior(m, queue, 0, y);
-                TryQueueExterior(m, queue, m.W - 1, y);
+                TryQueueExteriorBlank(m, queue, 0, y);
+                TryQueueExteriorBlank(m, queue, m.W - 1, y);
             }
 
             while (queue.Count > 0)
             {
                 var (x, y) = queue.Dequeue();
                 if (!m.InBounds(x, y)) continue;
-                if (m.Get(x, y) != InteriorMap.FLOOR) continue;
 
+                if (m.Get(x, y) != BLANK) continue;
+
+                // This BLANK is reachable from outside -> becomes VOID
                 m.Set(x, y, InteriorMap.VOID);
 
-                TryQueueExterior(m, queue, x + 1, y);
-                TryQueueExterior(m, queue, x - 1, y);
-                TryQueueExterior(m, queue, x, y + 1);
-                TryQueueExterior(m, queue, x, y - 1);
+                TryQueueExteriorBlank(m, queue, x + 1, y);
+                TryQueueExteriorBlank(m, queue, x - 1, y);
+                TryQueueExteriorBlank(m, queue, x, y + 1);
+                TryQueueExteriorBlank(m, queue, x, y - 1);
             }
         }
 
-        private static void TryQueueExterior(InteriorMap m, Queue<(int x, int y)> queue, int x, int y)
+        private static void TryQueueExteriorBlank(InteriorMap m, Queue<(int x, int y)> queue, int x, int y)
         {
             if (!m.InBounds(x, y)) return;
-            if (m.Get(x, y) != InteriorMap.FLOOR) return;
+            if (m.Get(x, y) != BLANK) return;
             queue.Enqueue((x, y));
+        }
+
+        private static void FillInteriorBlanks(InteriorMap m)
+        {
+            for (int y = 0; y < m.H; y++)
+            {
+                for (int x = 0; x < m.W; x++)
+                {
+                    if (m.Get(x, y) == BLANK)
+                        m.Set(x, y, InteriorMap.FLOOR);
+                }
+            }
         }
 
         private static bool TryFindNearestWalkable(InteriorMap m, int sx, int sy, out int xOut, out int yOut)
@@ -248,9 +289,9 @@ namespace SolarSystemApp.Interiors
 
         private static char GetModelChar(string[] model, int x, int y)
         {
-            if (y < 0 || y >= model.Length) return InteriorMap.FLOOR;
+            if (y < 0 || y >= model.Length) return '\0';
             string row = model[y] ?? string.Empty;
-            if (x < 0 || x >= row.Length) return InteriorMap.FLOOR;
+            if (x < 0 || x >= row.Length) return '\0';
             return row[x];
         }
     }

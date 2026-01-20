@@ -15,6 +15,7 @@ namespace SolarSystemApp.Interiors
         public const char VOID = '\0'; // outside ship (blocked)
         public const char WALL = '█';  // ship wall (blocked)
         public const char FLOOR = ' '; // walkable empty interior
+        public const char WALL2 = '|';
 
         public InteriorMap(int w, int h, char fill = VOID)
         {
@@ -43,8 +44,9 @@ namespace SolarSystemApp.Interiors
         {
             if (!InBounds(x, y)) return false;
             char t = Get(x, y);
-            return t != VOID && t != WALL;
+            return t != WALL && t != WALL2;
         }
+
 
         // Optional debug helper if you want to print in a stable way (not required by your engine).
         public string ToAscii(int playerX, int playerY)
@@ -71,7 +73,7 @@ namespace SolarSystemApp.Interiors
 
             if (!InBounds(x, y))
             {
-                glyph = ' ';
+                glyph = '#';                 // show out-of-bounds clearly
                 fg = AnsiColor.Black;
                 return;
             }
@@ -87,7 +89,7 @@ namespace SolarSystemApp.Interiors
 
             if (t == VOID)
             {
-                glyph = ' ';
+                glyph = '#';                 // show void as # so you can SEE the ship silhouette
                 fg = AnsiColor.Black;
                 return;
             }
@@ -99,8 +101,11 @@ namespace SolarSystemApp.Interiors
                 return;
             }
 
-            glyph = t;
+            // Anything else is walkable interior.
+            // If it's literally a space, draw a dot so it doesn’t look “cut off”.
+            glyph = (t == FLOOR) ? ' ' : t;
             fg = AnsiColor.White;
         }
+
     }
 }
