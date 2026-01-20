@@ -865,6 +865,10 @@ namespace SolarSystemApp
             int ox = x0 + (w - drawW) / 2;
             int oy = y0 + (h - drawH) / 2;
 
+            _activeInterior.UpdateCamera(drawW, drawH);
+            int camX = _activeInterior.CameraX;
+            int camY = _activeInterior.CameraY;
+
             // clear panel interior
             for (int y = 0; y < h; y++)
                 for (int x = 0; x < w; x++)
@@ -874,10 +878,12 @@ namespace SolarSystemApp
             {
                 for (int x = 0; x < drawW; x++)
                 {
-                    bool isPlayer = (x == _activeInterior.PlayerX && y == _activeInterior.PlayerY);
+                    int mapX = camX + x;
+                    int mapY = camY + y;
+                    bool isPlayer = (mapX == _activeInterior.PlayerX && mapY == _activeInterior.PlayerY);
 
                     // Interior map still yields ANSI palette (for now) — convert at the boundary.
-                    map.GetStyledTile(x, y, isPlayer, out char glyph, out AnsiColor fgA, out AnsiColor bgA);
+                    map.GetStyledTile(mapX, mapY, isPlayer, out char glyph, out AnsiColor fgA, out AnsiColor bgA);
                     Color fg = ToRgb(fgA);
                     Color bg = ToRgb(bgA);
 
