@@ -78,6 +78,8 @@ namespace SolarSystemApp
 
         private readonly Dictionary<int, PlanetTextureCache> _planetTextureCache = new Dictionary<int, PlanetTextureCache>(64);
         private SunTextureCache? _sunCache;
+        private PlanetDrawer.Occluder[] _occluders = Array.Empty<PlanetDrawer.Occluder>();
+        private double[] _occluderDepths = Array.Empty<double>();
 
         private struct StarPt
         {
@@ -103,6 +105,70 @@ namespace SolarSystemApp
             public Color[] Colors = Array.Empty<Color>();
             public byte[] Mask = Array.Empty<byte>();
             public double LastUpdateTime;
+        }
+
+        private readonly struct RingParams
+        {
+            public readonly double InnerMul;
+            public readonly double OuterMul;
+            public readonly double PlaneCos;
+            public readonly double PlaneSin;
+            public readonly double TiltSin;
+            public readonly double TiltCos;
+            public readonly double PatternCos;
+            public readonly double PatternSin;
+            public readonly double Ux;
+            public readonly double Uy;
+            public readonly double Uz;
+            public readonly double Vx;
+            public readonly double Vy;
+            public readonly double Vz;
+            public readonly double Nx;
+            public readonly double Ny;
+            public readonly double Nz;
+            public readonly double EdgeWidthMul;
+
+            public RingParams(
+                double innerMul,
+                double outerMul,
+                double planeCos,
+                double planeSin,
+                double tiltSin,
+                double tiltCos,
+                double patternCos,
+                double patternSin,
+                double ux,
+                double uy,
+                double uz,
+                double vx,
+                double vy,
+                double vz,
+                double nx,
+                double ny,
+                double nz,
+                double edgeWidthMul)
+            {
+                InnerMul = innerMul;
+                OuterMul = outerMul;
+                PlaneCos = planeCos;
+                PlaneSin = planeSin;
+                TiltSin = tiltSin;
+                TiltCos = tiltCos;
+                PatternCos = patternCos;
+                PatternSin = patternSin;
+                Ux = ux;
+                Uy = uy;
+                Uz = uz;
+                Vx = vx;
+                Vy = vy;
+                Vz = vz;
+                Nx = nx;
+                Ny = ny;
+                Nz = nz;
+                EdgeWidthMul = edgeWidthMul;
+            }
+
+            public bool IsValid => OuterMul > InnerMul;
         }
 
         private struct DebrisPt
@@ -204,7 +270,8 @@ namespace SolarSystemApp
             else
                 DrawSun(renderer);
 
-            DrawPlanets(renderer);
+            BuildOccluders();
+            DrawPlanets(renderer, _occluders, _occluderDepths);
             DrawStations(renderer);
             DrawShips(renderer);
             DrawSelection(renderer);
@@ -694,7 +761,10 @@ namespace SolarSystemApp
             }
         }
 
-        private void DrawPlanets(PixelRenderer renderer)
+        private void DrawPlanets(
+            PixelRenderer renderer,
+            ReadOnlySpan<PlanetDrawer.Occluder> occluders,
+            ReadOnlySpan<double> occluderDepths)
         {
             if (_sys == null)
                 return;
@@ -702,12 +772,12 @@ namespace SolarSystemApp
             for (int i = 0; i < _sys.Planets.Count; i++)
             {
                 Planet planet = _sys.Planets[i];
-                DrawPlanetBody(renderer, planet);
+                DrawPlanetBody(renderer, planet, occluders, occluderDepths);
 
                 for (int m = 0; m < planet.Moons.Count; m++)
                 {
                     Moon moon = planet.Moons[m];
-                    DrawMoonBody(renderer, moon);
+                    DrawMoonBody(renderer, moon, occluders, occluderDepths);
                 }
             }
         }
@@ -949,30 +1019,46 @@ namespace SolarSystemApp
             }
         }
 
-        private void DrawPlanetBody(PixelRenderer renderer, Planet planet)
+        private void DrawPlanetBody(
+            PixelRenderer renderer,
+            Planet planet,
+            ReadOnlySpan<PlanetDrawer.Occluder> occluders,
+            ReadOnlySpan<double> occluderDepths)
         {
             int seed = _sys == null ? 0 : _sys.Seed ^ (planet.Name?.GetHashCode() ?? 0);
+            double spinTurns = PlanetDrawer.SpinTurns(_simTime, planet.SpinSpeed);
             DrawTexturedBody(renderer,
                 planet.WX, planet.WY, planet.RadiusWorld,
                 planet.Name,
                 planet.HasRings,
                 planet.Texture,
                 seed,
-                planet.SpinSpeed,
-                planet.AxisTilt);
+                spinTurns,
+                planet.AxisTilt,
+                planet.WZ,
+                occluders,
+                occluderDepths);
         }
 
-        private void DrawMoonBody(PixelRenderer renderer, Moon moon)
+        private void DrawMoonBody(
+            PixelRenderer renderer,
+            Moon moon,
+            ReadOnlySpan<PlanetDrawer.Occluder> occluders,
+            ReadOnlySpan<double> occluderDepths)
         {
             int seed = _sys == null ? 0 : _sys.Seed ^ (moon.Name?.GetHashCode() ?? 0);
+            double spinTurns = ComputeMoonSpinTurns(moon, seed);
             DrawTexturedBody(renderer,
                 moon.WX, moon.WY, moon.RadiusWorld,
                 moon.Name,
                 false,
                 moon.Texture,
                 seed,
-                moon.SpinSpeed,
-                axisTilt: 0.0);
+                spinTurns,
+                axisTilt: 0.0,
+                moon.WZ,
+                occluders,
+                occluderDepths);
         }
 
         private void DrawTexturedBody(
@@ -984,8 +1070,11 @@ namespace SolarSystemApp
             bool rings,
             PlanetDrawer.PlanetTexture texture,
             int seed,
-            double spinSpeed,
-            double axisTilt)
+            double spinTurns,
+            double axisTilt,
+            double bodyDepth,
+            ReadOnlySpan<PlanetDrawer.Occluder> occluders,
+            ReadOnlySpan<double> occluderDepths)
         {
             int cx = WorldToScreenX(wx);
             int cy = WorldToScreenY(wy);
@@ -994,15 +1083,20 @@ namespace SolarSystemApp
                 return;
 
             PlanetTextureCache cache = GetPlanetTextureCache(seed, texture);
-            double spinTurns = (_simTime * spinSpeed) / (Math.PI * 2.0);
+            ComputeLightDir(wx, wy, out double lx, out double ly, out double lz);
 
-            DrawTexturedSphere(renderer, cx, cy, r, wx, wy, spinTurns, axisTilt, cache);
+            RingParams ringParams = default;
+            bool hasRings = rings;
+            if (rings)
+                ringParams = BuildRingParams(seed, axisTilt, _simTime);
+
+            DrawTexturedSphere(renderer, cx, cy, r, spinTurns, axisTilt, cache, lx, ly, lz,
+                hasRings, ringParams, bodyDepth, occluders, occluderDepths);
 
             if (rings)
             {
-                int mid = (PlanetTextureSize / 2) * PlanetTextureSize + (PlanetTextureSize / 2);
-                Color ringColor = ColorUtils.Shade(cache.BaseColors[mid], 0.5);
-                DrawRings(renderer, cx, cy, r + 3, r + 6, ringColor);
+                DrawRings(renderer, cx, cy, r, texture, seed, ringParams, lx, ly, lz,
+                    bodyDepth, occluders, occluderDepths);
             }
 
             if (_showLabels)
@@ -1014,25 +1108,22 @@ namespace SolarSystemApp
             int cx,
             int cy,
             int r,
-            double wx,
-            double wy,
             double spinTurns,
             double axisTilt,
-            PlanetTextureCache cache)
+            PlanetTextureCache cache,
+            double lx,
+            double ly,
+            double lz,
+            bool hasRings,
+            in RingParams ringParams,
+            double bodyDepth,
+            ReadOnlySpan<PlanetDrawer.Occluder> occluders,
+            ReadOnlySpan<double> occluderDepths)
         {
             if (r <= 0)
                 return;
 
-            double lx = -wx;
-            double ly = -wy;
-            double lz = 0.6;
-            double len = Math.Sqrt(lx * lx + ly * ly + lz * lz);
-            if (len > 0.0001)
-            {
-                lx /= len;
-                ly /= len;
-                lz /= len;
-            }
+            bool useRingShadow = hasRings && ringParams.IsValid;
 
             double ct = Math.Cos(axisTilt);
             double st = Math.Sin(axisTilt);
@@ -1048,6 +1139,12 @@ namespace SolarSystemApp
                 {
                     int d2 = x * x + yy;
                     if (d2 > rr)
+                        continue;
+
+                    int px = cx + x;
+                    int py = cy + y;
+
+                    if (IsOccludedPixel(px, py, bodyDepth, cx, cy, r, occluders, occluderDepths, skipSelf: true))
                         continue;
 
                     double nx = x * invR;
@@ -1077,6 +1174,12 @@ namespace SolarSystemApp
                     double limb = 0.78 + 0.22 * nz;
                     double light = MathUtil.Clamp(ndotl * limb, 0.0, 1.0);
 
+                    if (useRingShadow)
+                    {
+                        double ringShadow = RingShadowFactor(nx, ny, nz, lx, ly, lz, ringParams);
+                        light *= ringShadow;
+                    }
+
                     Color shaded = ColorUtils.Shade(baseColor, light);
 
                     if (emissive > 0.0001f)
@@ -1087,27 +1190,416 @@ namespace SolarSystemApp
                             shaded = BlendRgb(shaded, emissiveColor, MathUtil.Clamp(e, 0.0, 0.85));
                     }
 
-                    renderer.SetPixel(cx + x, cy + y, shaded);
+                    renderer.SetPixel(px, py, shaded);
                 }
             }
         }
 
-        private void DrawRings(PixelRenderer renderer, int cx, int cy, int r0, int r1, Color color)
+        private static void ComputeLightDir(double wx, double wy, out double lx, out double ly, out double lz)
         {
-            int steps = Math.Max(120, r1 * 6);
-            for (int i = 0; i < steps; i++)
+            lx = -wx;
+            ly = -wy;
+            lz = 0.6;
+
+            double len = Math.Sqrt(lx * lx + ly * ly + lz * lz);
+            if (len > 0.0001)
             {
-                double a = (i / (double)steps) * Math.PI * 2.0;
-                double x = Math.Cos(a);
-                double y = Math.Sin(a) * 0.55;
-
-                int px0 = cx + (int)Math.Round(x * r0);
-                int py0 = cy + (int)Math.Round(y * r0);
-                int px1 = cx + (int)Math.Round(x * r1);
-                int py1 = cy + (int)Math.Round(y * r1);
-
-                renderer.DrawLine(px0, py0, px1, py1, color);
+                lx /= len;
+                ly /= len;
+                lz /= len;
             }
+        }
+
+        private static RingParams BuildRingParams(int seed, double axisTilt, double simTime)
+        {
+            const double InnerMin = 1.15;
+            const double InnerMax = 1.35;
+            const double OuterMin = 1.35;
+            const double OuterMax = 1.75;
+
+            double rIn = HashNoise.Hash01(seed, 10, 20);
+            double rOut = HashNoise.Hash01(seed, 30, 40);
+
+            double innerMul = InnerMin + (InnerMax - InnerMin) * rIn;
+            double outerMul = OuterMin + (OuterMax - OuterMin) * rOut;
+
+            if (outerMul < innerMul + 0.20) outerMul = innerMul + 0.20;
+
+            double planeAngle = HashNoise.Hash01(seed, 777, 999) * Math.PI * 2.0;
+            double ringSpinRate = 0.02 + 0.03 * HashNoise.Hash01(seed, 222, 333);
+            double patternAngle = simTime * ringSpinRate + HashNoise.Hash01(seed, 888, 111) * Math.PI * 2.0;
+
+            double planeCos = Math.Cos(planeAngle);
+            double planeSin = Math.Sin(planeAngle);
+            double patternCos = Math.Cos(patternAngle);
+            double patternSin = Math.Sin(patternAngle);
+
+            double tiltSin = Math.Sin(axisTilt);
+            double tiltCos = Math.Cos(axisTilt);
+
+            double ux = planeCos;
+            double uy = planeSin;
+            double uz = 0.0;
+
+            double vx = -planeSin * tiltCos;
+            double vy = planeCos * tiltCos;
+            double vz = -tiltSin;
+
+            double nx = -planeSin * tiltSin;
+            double ny = planeCos * tiltSin;
+            double nz = tiltCos;
+
+            double edgeWidthMul = MathUtil.Clamp((outerMul - innerMul) * 0.10, 0.04, 0.12);
+
+            return new RingParams(
+                innerMul,
+                outerMul,
+                planeCos,
+                planeSin,
+                tiltSin,
+                tiltCos,
+                patternCos,
+                patternSin,
+                ux,
+                uy,
+                uz,
+                vx,
+                vy,
+                vz,
+                nx,
+                ny,
+                nz,
+                edgeWidthMul);
+        }
+
+        private void DrawRings(
+            PixelRenderer renderer,
+            int cx,
+            int cy,
+            int planetR,
+            PlanetDrawer.PlanetTexture texture,
+            int seed,
+            RingParams ring,
+            double lx,
+            double ly,
+            double lz,
+            double planetDepth,
+            ReadOnlySpan<PlanetDrawer.Occluder> occluders,
+            ReadOnlySpan<double> occluderDepths)
+        {
+            if (!ring.IsValid)
+                return;
+
+            PlanetTextures.PaletteId pal = default;
+            bool useVariantPalette = (texture != PlanetDrawer.PlanetTexture.EarthLike && texture != PlanetDrawer.PlanetTexture.Continents);
+            if (useVariantPalette)
+                pal = PlanetTextures.PickPaletteVariant(seed, texture);
+
+            PlanetTextures.GetPalette(texture, pal, out var dark, out var mid, out var light);
+
+            Color c2 = DustifyColor(Color.FromRgb(dark.r, dark.g, dark.b), amount: 0.55);
+            Color c1 = DustifyColor(Color.FromRgb(mid.r, mid.g, mid.b), amount: 0.45);
+            Color c0 = DustifyColor(Color.FromRgb(light.r, light.g, light.b), amount: 0.35);
+
+            DrawRingLayer(renderer, cx, cy, planetR, ring, c2, c1, c0, lx, ly, lz,
+                planetDepth + 0.02, front: false, occluders, occluderDepths, seed);
+
+            DrawRingLayer(renderer, cx, cy, planetR, ring, c2, c1, c0, lx, ly, lz,
+                planetDepth - 0.02, front: true, occluders, occluderDepths, seed);
+        }
+
+        private void DrawRingLayer(
+            PixelRenderer renderer,
+            int cx,
+            int cy,
+            int planetR,
+            RingParams ring,
+            Color dark,
+            Color mid,
+            Color light,
+            double lx,
+            double ly,
+            double lz,
+            double ringDepth,
+            bool front,
+            ReadOnlySpan<PlanetDrawer.Occluder> occluders,
+            ReadOnlySpan<double> occluderDepths,
+            int seed)
+        {
+            double inner = planetR * ring.InnerMul;
+            double outer = planetR * ring.OuterMul;
+            if (outer <= inner + 0.01)
+                return;
+
+            double span = outer - inner;
+            double invSpan = 1.0 / span;
+            double tiltScale = Math.Max(0.15, Math.Abs(ring.TiltCos));
+            double edgeWidth = Math.Max(1.0, span * ring.EdgeWidthMul);
+
+            int box = (int)Math.Ceiling(outer) + 2;
+            double invOuter = 1.0 / Math.Max(1.0, outer);
+
+            double gapMajor = 0.55 + 0.05 * (HashNoise.Hash01(seed, 901, 902) - 0.5);
+            double gapMajorW = 0.030 + 0.010 * HashNoise.Hash01(seed, 903, 904);
+
+            double gap2 = 0.18 + 0.04 * (HashNoise.Hash01(seed, 905, 906) - 0.5);
+            double gap2W = 0.018 + 0.008 * HashNoise.Hash01(seed, 907, 908);
+
+            double gap3 = 0.82 + 0.04 * (HashNoise.Hash01(seed, 909, 910) - 0.5);
+            double gap3W = 0.020 + 0.010 * HashNoise.Hash01(seed, 911, 912);
+
+            bool faceOn = Math.Abs(ring.TiltSin) < 0.08;
+
+            for (int y = -box; y <= box; y++)
+            {
+                for (int x = -box; x <= box; x++)
+                {
+                    int px = cx + x;
+
+                    double rx = x * ring.PlaneCos + y * ring.PlaneSin;
+                    double ry = -x * ring.PlaneSin + y * ring.PlaneCos;
+                    double ryPlane = ry / tiltScale;
+
+                    if (!faceOn)
+                    {
+                        bool isFront = (ryPlane * ring.TiltSin) < 0.0;
+                        if (front != isFront)
+                            continue;
+                    }
+                    else if (!front)
+                    {
+                        continue;
+                    }
+
+                    double d = Math.Sqrt(rx * rx + ryPlane * ryPlane);
+                    if (d < inner || d > outer)
+                        continue;
+
+                    if (IsOccludedPixel(px, py, ringDepth, cx, cy, planetR, occluders, occluderDepths, skipSelf: front))
+                        continue;
+
+                    double band = (d - inner) * invSpan;
+                    band = MathUtil.Clamp(band, 0.0, 1.0);
+
+                    double dens = 1.0 - 0.55 * band;
+                    dens = MathUtil.Clamp(dens, 0.0, 1.0);
+
+                    double prx = rx * ring.PatternCos - ryPlane * ring.PatternSin;
+                    double pry = rx * ring.PatternSin + ryPlane * ring.PatternCos;
+
+                    double f1 = Math.Abs(Math.Sin((band * 18.0 + 0.7 * prx * 0.10) * Math.PI));
+                    double f2 = Math.Abs(Math.Sin((band * 41.0 + 0.9 * pry * 0.08) * Math.PI));
+                    double n1 = HashNoise.Hash01(seed, (int)Math.Round(prx * 0.4), (int)Math.Round(pry * 0.4));
+
+                    dens *= (0.65 + 0.25 * f1 + 0.18 * f2);
+                    dens *= (0.82 + 0.20 * (n1 - 0.5));
+
+                    double gMajor = Math.Abs(band - gapMajor);
+                    if (gMajor < gapMajorW) dens *= 0.12 + 0.35 * (gMajor / gapMajorW);
+
+                    double g2 = Math.Abs(band - gap2);
+                    if (g2 < gap2W) dens *= 0.25 + 0.55 * (g2 / gap2W);
+
+                    double g3 = Math.Abs(band - gap3);
+                    if (g3 < gap3W) dens *= 0.25 + 0.55 * (g3 / gap3W);
+
+                    double dot = (x * lx + y * ly) * invOuter;
+                    double ringLight = MathUtil.Clamp(0.55 + 0.40 * dot, 0.15, 1.0);
+
+                    double edgeIn = (d - inner) / edgeWidth;
+                    double edgeOut = (outer - d) / edgeWidth;
+                    double edge = Math.Min(edgeIn, edgeOut);
+                    edge = SmoothStep01(MathUtil.Clamp(edge, 0.0, 1.0));
+
+                    double ru = rx / planetR;
+                    double rv = ryPlane / planetR;
+                    double shadow = RingPointShadowFactor(ru, rv, ring, lx, ly, lz);
+
+                    double brightness = edge * (0.20 + 0.80 * dens) * (0.35 + 0.65 * ringLight) * shadow;
+                    if (brightness <= 0.02)
+                        continue;
+
+                    Color fg = (dens < 0.33) ? dark : (dens < 0.66 ? mid : light);
+                    fg = ColorUtils.Shade(fg, MathUtil.Clamp(brightness, 0.0, 1.0));
+
+                    renderer.SetPixel(px, py, fg);
+                }
+            }
+        }
+
+        private static double RingShadowFactor(
+            double nx,
+            double ny,
+            double nz,
+            double lx,
+            double ly,
+            double lz,
+            in RingParams ring)
+        {
+            double denom = ring.Nx * lx + ring.Ny * ly + ring.Nz * lz;
+            if (Math.Abs(denom) < 1e-6)
+                return 1.0;
+
+            double t = -(ring.Nx * nx + ring.Ny * ny + ring.Nz * nz) / denom;
+            if (t <= 0.0)
+                return 1.0;
+
+            double qx = nx + lx * t;
+            double qy = ny + ly * t;
+            double qz = nz + lz * t;
+
+            double ru = qx * ring.Ux + qy * ring.Uy + qz * ring.Uz;
+            double rv = qx * ring.Vx + qy * ring.Vy + qz * ring.Vz;
+            double r = Math.Sqrt(ru * ru + rv * rv);
+
+            if (r < ring.InnerMul || r > ring.OuterMul)
+                return 1.0;
+
+            double edgeIn = (r - ring.InnerMul) / ring.EdgeWidthMul;
+            double edgeOut = (ring.OuterMul - r) / ring.EdgeWidthMul;
+            double edge = Math.Min(edgeIn, edgeOut);
+            edge = SmoothStep01(MathUtil.Clamp(edge, 0.0, 1.0));
+
+            const double shadowMin = 0.65;
+            return 1.0 - (1.0 - shadowMin) * edge;
+        }
+
+        private static double RingPointShadowFactor(
+            double ru,
+            double rv,
+            in RingParams ring,
+            double lx,
+            double ly,
+            double lz)
+        {
+            double px = ring.Ux * ru + ring.Vx * rv;
+            double py = ring.Uy * ru + ring.Vy * rv;
+            double pz = ring.Uz * ru + ring.Vz * rv;
+
+            double b = px * lx + py * ly + pz * lz;
+            double c = px * px + py * py + pz * pz - 1.0;
+            double disc = b * b - c;
+
+            if (disc <= 0.0)
+                return 1.0;
+
+            double t = -b - Math.Sqrt(disc);
+            if (t <= 0.0)
+                return 1.0;
+
+            double closest2 = c - b * b;
+            double dist = Math.Sqrt(Math.Max(0.0, closest2));
+            double penumbra = SmoothStep01(MathUtil.Clamp((1.0 - dist) / 0.20, 0.0, 1.0));
+
+            return 1.0 - 0.45 * penumbra;
+        }
+
+        private void BuildOccluders()
+        {
+            if (_sys == null)
+            {
+                _occluders = Array.Empty<PlanetDrawer.Occluder>();
+                _occluderDepths = Array.Empty<double>();
+                return;
+            }
+
+            var occluderList = OccluderBuilder.BuildForSystem(
+                _sys,
+                worldToScreenX: wx => WorldToScreenX(wx),
+                worldToScreenY: wy => WorldToScreenY(wy),
+                worldRadiusToChars: rw => MathUtil.ClampInt((int)Math.Round(rw * _worldToScreen), 1, 200));
+
+            int occCount = (occluderList == null) ? 0 : occluderList.Count;
+            if (occCount == 0)
+            {
+                _occluders = Array.Empty<PlanetDrawer.Occluder>();
+                _occluderDepths = Array.Empty<double>();
+                return;
+            }
+
+            if (_occluders.Length != occCount)
+                _occluders = new PlanetDrawer.Occluder[occCount];
+            if (_occluderDepths.Length != occCount)
+                _occluderDepths = new double[occCount];
+
+            for (int i = 0; i < occCount; i++)
+                _occluders[i] = occluderList[i];
+
+            int idx = 0;
+            for (int i = 0; i < _sys.Planets.Count && idx < occCount; i++)
+            {
+                Planet p = _sys.Planets[i];
+                _occluderDepths[idx++] = p.WZ;
+
+                for (int m = 0; m < p.Moons.Count && idx < occCount; m++)
+                {
+                    Moon moon = p.Moons[m];
+                    _occluderDepths[idx++] = moon.WZ;
+                }
+            }
+
+            for (; idx < occCount; idx++)
+                _occluderDepths[idx] = 0.0;
+        }
+
+        private static bool IsOccludedPixel(
+            int px,
+            int py,
+            double depth,
+            int selfX,
+            int selfY,
+            int selfR,
+            ReadOnlySpan<PlanetDrawer.Occluder> occluders,
+            ReadOnlySpan<double> occluderDepths,
+            bool skipSelf)
+        {
+            if (occluders.IsEmpty || occluderDepths.IsEmpty)
+                return false;
+
+            int count = Math.Min(occluders.Length, occluderDepths.Length);
+            for (int i = 0; i < count; i++)
+            {
+                var occ = occluders[i];
+                if (skipSelf && occ.X == selfX && occ.Y == selfY && occ.R == selfR)
+                    continue;
+
+                if (occluderDepths[i] >= depth - 1e-6)
+                    continue;
+
+                int dx = px - occ.X;
+                int dy = py - occ.Y;
+                if (dx * dx + dy * dy <= occ.R * occ.R)
+                    return true;
+            }
+
+            return false;
+        }
+
+        private double ComputeMoonSpinTurns(Moon moon, int seed)
+        {
+            if (Math.Abs(moon.SpinSpeed) > 1e-6)
+                return PlanetDrawer.SpinTurns(_simTime, moon.SpinSpeed);
+
+            double period = Math.Max(0.001, moon.LocalPeriod);
+            if (period <= 0.0001)
+            {
+                double fallback = 0.6 + 1.4 * HashNoise.Hash01(seed, 73, 91);
+                return PlanetDrawer.SpinTurns(_simTime, fallback);
+            }
+
+            double ang = moon.LocalPhase + (_simTime * (Math.PI * 2.0) / period);
+            return ang / (Math.PI * 2.0);
+        }
+
+        private static double SmoothStep01(double x)
+        {
+            x = MathUtil.Clamp(x, 0.0, 1.0);
+            return x * x * (3.0 - 2.0 * x);
+        }
+
+        private static Color DustifyColor(Color baseColor, double amount)
+        {
+            return BlendRgb(baseColor, Color.FromRgb(220, 225, 230), amount);
         }
 
         private PlanetTextureCache GetPlanetTextureCache(int seed, PlanetDrawer.PlanetTexture texture)
