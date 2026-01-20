@@ -110,6 +110,7 @@ namespace AsciiEngine
                     if (key == ConsoleKey.Escape)
                     {
                         ExitRequested = true;
+                        input.OnKey(key);
                         break;
                     }
 

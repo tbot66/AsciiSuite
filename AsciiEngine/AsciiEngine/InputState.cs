@@ -24,6 +24,12 @@ namespace AsciiEngine
         private readonly int[] _releasedList = new int[8];
         private int _releasedCount;
 
+        private int _mouseX;
+        private int _mouseY;
+        private bool _mouseLeftDown;
+        private bool _mouseLeftPressed;
+        private bool _mouseLeftReleased;
+
         // Called once per frame before reading new keys
         internal void BeginFrame()
         {
@@ -34,6 +40,9 @@ namespace AsciiEngine
             for (int i = 0; i < _releasedCount; i++)
                 _released[_releasedList[i]] = false;
             _releasedCount = 0;
+
+            _mouseLeftPressed = false;
+            _mouseLeftReleased = false;
         }
 
         // Called by TerminalSession when a key event arrives
@@ -90,6 +99,21 @@ namespace AsciiEngine
         {
             int k = (int)key;
             return (uint)k < (uint)KeyCapacity && _released[k];
+        }
+
+        public int MouseX => _mouseX;
+        public int MouseY => _mouseY;
+        public bool MouseLeftDown => _mouseLeftDown;
+        public bool MouseLeftPressed => _mouseLeftPressed;
+        public bool MouseLeftReleased => _mouseLeftReleased;
+
+        internal void SetMouseState(int x, int y, bool leftDown, bool leftPressed, bool leftReleased)
+        {
+            _mouseX = x;
+            _mouseY = y;
+            _mouseLeftDown = leftDown;
+            _mouseLeftPressed = leftPressed;
+            _mouseLeftReleased = leftReleased;
         }
 
         // Convenience for movement
