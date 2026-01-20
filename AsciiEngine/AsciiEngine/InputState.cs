@@ -21,7 +21,7 @@ namespace AsciiEngine
         private readonly int[] _pressedList = new int[64];
         private int _pressedCount;
 
-        private readonly int[] _releasedList = new int[8];
+        private readonly int[] _releasedList = new int[64];
         private int _releasedCount;
 
         private int _mouseX;
@@ -29,6 +29,13 @@ namespace AsciiEngine
         private bool _mouseLeftDown;
         private bool _mouseLeftPressed;
         private bool _mouseLeftReleased;
+        private bool _mouseRightDown;
+        private bool _mouseRightPressed;
+        private bool _mouseRightReleased;
+        private bool _mouseMiddleDown;
+        private bool _mouseMiddlePressed;
+        private bool _mouseMiddleReleased;
+        private int _mouseWheelDelta;
 
         // Called once per frame before reading new keys
         internal void BeginFrame()
@@ -43,10 +50,20 @@ namespace AsciiEngine
 
             _mouseLeftPressed = false;
             _mouseLeftReleased = false;
+            _mouseRightPressed = false;
+            _mouseRightReleased = false;
+            _mouseMiddlePressed = false;
+            _mouseMiddleReleased = false;
+            _mouseWheelDelta = 0;
         }
 
         // Called by TerminalSession when a key event arrives
         internal void OnKey(ConsoleKey key)
+        {
+            OnKeyDown(key);
+        }
+
+        internal void OnKeyDown(ConsoleKey key)
         {
             int k = (int)key;
             if ((uint)k >= (uint)KeyCapacity) return;
@@ -72,6 +89,21 @@ namespace AsciiEngine
                     _pressed[k] = true;
                     AddToList(ref _pressedCount, _pressedList, k);
                 }
+            }
+        }
+
+        internal void OnKeyUp(ConsoleKey key)
+        {
+            int k = (int)key;
+            if ((uint)k >= (uint)KeyCapacity) return;
+
+            if (_down[k])
+                _down[k] = false;
+
+            if (!_released[k])
+            {
+                _released[k] = true;
+                AddToList(ref _releasedCount, _releasedList, k);
             }
         }
 
@@ -106,14 +138,31 @@ namespace AsciiEngine
         public bool MouseLeftDown => _mouseLeftDown;
         public bool MouseLeftPressed => _mouseLeftPressed;
         public bool MouseLeftReleased => _mouseLeftReleased;
+        public bool MouseRightDown => _mouseRightDown;
+        public bool MouseRightPressed => _mouseRightPressed;
+        public bool MouseRightReleased => _mouseRightReleased;
+        public bool MouseMiddleDown => _mouseMiddleDown;
+        public bool MouseMiddlePressed => _mouseMiddlePressed;
+        public bool MouseMiddleReleased => _mouseMiddleReleased;
+        public int MouseWheelDelta => _mouseWheelDelta;
 
-        internal void SetMouseState(int x, int y, bool leftDown, bool leftPressed, bool leftReleased)
+        internal void SetMouseState(int x, int y, bool leftDown, bool leftPressed, bool leftReleased,
+            bool rightDown = false, bool rightPressed = false, bool rightReleased = false,
+            bool middleDown = false, bool middlePressed = false, bool middleReleased = false,
+            int wheelDelta = 0)
         {
             _mouseX = x;
             _mouseY = y;
             _mouseLeftDown = leftDown;
             _mouseLeftPressed = leftPressed;
             _mouseLeftReleased = leftReleased;
+            _mouseRightDown = rightDown;
+            _mouseRightPressed = rightPressed;
+            _mouseRightReleased = rightReleased;
+            _mouseMiddleDown = middleDown;
+            _mouseMiddlePressed = middlePressed;
+            _mouseMiddleReleased = middleReleased;
+            _mouseWheelDelta = wheelDelta;
         }
 
         // Convenience for movement
