@@ -259,21 +259,21 @@ namespace AsciiEngine
             int rough = Width * Height;
             if (rough > 0) _sb.EnsureCapacity(Math.Min(rough * 4, 2_000_000));
 
+            _sb.Append(Ansi.Home);
+
             Color curFg = default;
             Color curBg = default;
             bool hasFg = false, hasBg = false;
 
             for (int y = 0; y < Height; y++)
             {
-                int minX = _dirtyMinX[y];
-                int maxX = _dirtyMaxX[y];
-
-                if (maxX < minX) continue;
-
-                Ansi.AppendCursorPos(_sb, y + 1, minX + 1);
-
                 int row = y * Width;
-                for (int x = minX; x <= maxX; x++)
+                if (y > 0)
+                {
+                    _sb.Append('\n');
+                }
+
+                for (int x = 0; x < Width; x++)
                 {
                     int idx = row + x;
 
@@ -295,16 +295,17 @@ namespace AsciiEngine
 
                     _sb.Append(_chars[idx]);
                 }
-
-                _dirtyMinX[y] = int.MaxValue;
-                _dirtyMaxX[y] = int.MinValue;
             }
 
             _sb.Append(Ansi.Reset);
             Console.Write(_sb.ToString());
+
+            ResetDirtySpans(fullDirty: false);
         }
 
         private static Color NormalizeColor(Color color)
             => color.IsRgb24 ? color : ColorUtils.ToRgbColor(color);
+
+        internal int BufferLength => _chars.Length;
     }
 }

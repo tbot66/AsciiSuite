@@ -95,9 +95,10 @@ namespace AsciiEngine
 
                 TryMatchBufferToWindow();
 
-                // Clamp engine sizes to reasonable limits
-                newW = Math.Max(20, Math.Min(200, w));
-                newH = Math.Max(10, Math.Min(80, h));
+                newW = Math.Max(1, w);
+                newH = Math.Max(1, h);
+
+                Diagnostics.Log($"[AsciiEngine] Resize detected: window={w}x{h}, engine={newW}x{newH}, buffer={GetBufferSizeText()}");
             }
 
             return resized;
@@ -164,6 +165,18 @@ namespace AsciiEngine
                 Console.SetBufferSize(w, h);
             }
             catch { }
+        }
+
+        private static string GetBufferSizeText()
+        {
+            try
+            {
+                return $"{Console.BufferWidth}x{Console.BufferHeight}";
+            }
+            catch
+            {
+                return "unknown";
+            }
         }
 
         public void Dispose()
