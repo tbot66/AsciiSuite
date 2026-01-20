@@ -29,6 +29,12 @@ namespace AsciiEngine
 
         public bool QuitRequested { get; private set; }
 
+        private int _mouseX;
+        private int _mouseY;
+        private bool _mouseLeftDown;
+        private bool _mouseLeftPressed;
+        private bool _mouseLeftReleased;
+
         public SdlGlPixelPresenter(string title = "AsciiEngine")
         {
             _title = title;
@@ -44,8 +50,6 @@ namespace AsciiEngine
 
             if (QuitRequested)
                 return;
-
-            PumpEvents();
 
             SDL.SDL_GL_GetDrawableSize(_window, out int windowW, out int windowH);
             if (windowW <= 0 || windowH <= 0)
@@ -81,6 +85,35 @@ namespace AsciiEngine
             GL.DrawArrays(PrimitiveType.Triangles, 0, 6);
 
             SDL.SDL_GL_SwapWindow(_window);
+        }
+
+        public void PollInput(PixelRenderer src, InputState input)
+        {
+            if (_disposed) throw new ObjectDisposedException(nameof(SdlGlPixelPresenter));
+            if (src == null) throw new ArgumentNullException(nameof(src));
+            if (input == null) throw new ArgumentNullException(nameof(input));
+
+            if (!_initialized)
+                Initialize(src);
+
+            PumpEvents();
+
+            SDL.SDL_GetWindowSize(_window, out int windowW, out int windowH);
+            int sx = 0;
+            int sy = 0;
+            if (windowW > 0 && windowH > 0)
+            {
+                sx = (int)Math.Round(_mouseX * (src.Width / (double)windowW));
+                sy = (int)Math.Round(_mouseY * (src.Height / (double)windowH));
+            }
+
+            sx = Math.Clamp(sx, 0, Math.Max(0, src.Width - 1));
+            sy = Math.Clamp(sy, 0, Math.Max(0, src.Height - 1));
+
+            input.SetMouseState(sx, sy, _mouseLeftDown, _mouseLeftPressed, _mouseLeftReleased);
+
+            _mouseLeftPressed = false;
+            _mouseLeftReleased = false;
         }
 
         private void Initialize(PixelRenderer src)
@@ -194,6 +227,31 @@ namespace AsciiEngine
             {
                 if (e.type == SDL.SDL_EventType.SDL_QUIT)
                     QuitRequested = true;
+                else if (e.type == SDL.SDL_EventType.SDL_MOUSEMOTION)
+                {
+                    _mouseX = e.motion.x;
+                    _mouseY = e.motion.y;
+                }
+                else if (e.type == SDL.SDL_EventType.SDL_MOUSEBUTTONDOWN)
+                {
+                    if (e.button.button == SDL.SDL_BUTTON_LEFT)
+                    {
+                        _mouseLeftDown = true;
+                        _mouseLeftPressed = true;
+                        _mouseX = e.button.x;
+                        _mouseY = e.button.y;
+                    }
+                }
+                else if (e.type == SDL.SDL_EventType.SDL_MOUSEBUTTONUP)
+                {
+                    if (e.button.button == SDL.SDL_BUTTON_LEFT)
+                    {
+                        _mouseLeftDown = false;
+                        _mouseLeftReleased = true;
+                        _mouseX = e.button.x;
+                        _mouseY = e.button.y;
+                    }
+                }
             }
         }
 

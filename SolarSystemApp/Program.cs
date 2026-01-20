@@ -14,25 +14,28 @@ internal static class Program
             return;
         }
 
-        if (HasFlag(args, "--pixel-tests"))
+        if (HasFlag(args, "--pixeldemo"))
         {
-            RunPixelTests();
+            Diagnostics.Log("[SolarSystem] Pixel app: PixelDemoScene.");
+            RunPixelGame(new PixelDemoScene(), "Pixel Demo");
             return;
         }
 
-        RunPixelGame();
+        if (HasFlag(args, "--pixeltest") || HasFlag(args, "--pixel-tests"))
+        {
+            Diagnostics.Log("[SolarSystem] Pixel app: PixelRenderTests.");
+            RunPixelGame(new PixelRenderTests(), "Pixel Render Tests");
+            return;
+        }
+
+        Diagnostics.Log("[SolarSystem] Pixel app: SolarSystemPixelScene.");
+        RunPixelGame(new SolarSystemPixelScene(), "Solar System");
     }
 
-    private static void RunPixelGame()
+    private static void RunPixelGame(IPixelApp app, string title)
     {
-        using IFramePresenter<PixelRenderer> presenter = new SdlGlPixelPresenter("Solar System");
-        PixelRunner.Run(new SolarSystemPixelScene(), fpsCap: 60, presenter);
-    }
-
-    private static void RunPixelTests()
-    {
-        using IFramePresenter<PixelRenderer> presenter = new SdlGlPixelPresenter("Pixel Render Tests");
-        PixelRunner.Run(new PixelRenderTests(), fpsCap: 60, presenter);
+        using IFramePresenter<PixelRenderer> presenter = new SdlGlPixelPresenter(title);
+        PixelRunner.Run(app, fpsCap: 60, presenter);
     }
 
     private static void RunAscii()

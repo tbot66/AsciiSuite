@@ -119,7 +119,7 @@ namespace SolarSystemApp.Rendering
                     int y0 = _camera.WorldToPixelY(prevY);
                     int x1 = _camera.WorldToPixelX(wx);
                     int y1 = _camera.WorldToPixelY(wy);
-                    renderer.DrawLine(x0, y0, x1, y1, orbitColor);
+                    DrawThickLine(renderer, x0, y0, x1, y1, orbitColor);
                 }
 
                 prevX = wx;
@@ -151,5 +151,17 @@ namespace SolarSystemApp.Rendering
 
         private int WorldToPixels(double worldRadius)
             => Math.Max(1, (int)Math.Round(worldRadius * _camera.Zoom));
+
+        private static void DrawThickLine(PixelRenderer renderer, int x0, int y0, int x1, int y1, Color color)
+        {
+            renderer.DrawLine(x0, y0, x1, y1, color);
+
+            int dx = Math.Abs(x1 - x0);
+            int dy = Math.Abs(y1 - y0);
+            if (dx >= dy)
+                renderer.DrawLine(x0, y0 + 1, x1, y1 + 1, color);
+            else
+                renderer.DrawLine(x0 + 1, y0, x1 + 1, y1, color);
+        }
     }
 }

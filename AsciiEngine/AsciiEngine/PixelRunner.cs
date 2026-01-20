@@ -34,6 +34,8 @@ namespace AsciiEngine
                     ctx.Time += dt;
 
                     terminal.PollInput(input);
+                    if (presenter is SdlGlPixelPresenter sdlPresenter)
+                        sdlPresenter.PollInput(ctx.Renderer, input);
 
                     app.Update(ctx);
                     app.Draw(ctx);
