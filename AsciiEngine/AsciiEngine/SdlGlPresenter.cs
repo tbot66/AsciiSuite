@@ -421,7 +421,7 @@ namespace AsciiEngine
             data[offset++] = bf;
         }
 
-        private static bool TryMapMouseButton(byte sdlButton, out MouseButton button)
+        private static bool TryMapMouseButton(uint sdlButton, out MouseButton button)
         {
             switch (sdlButton)
             {
