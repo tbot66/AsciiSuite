@@ -112,6 +112,12 @@ namespace SolarSystemApp
 
         // Spectre caches for interior
         private string _spectreInteriorHeaderCache = "";
+        private string _spectreInteriorInteractionCache = "";
+        private InteriorSession.InteractionMode _spectreInteriorInteractionMode = InteriorSession.InteractionMode.None;
+        private int _spectreInteriorInteractionCount = 0;
+        private int _spectreInteriorSleepSelectedHours = -1;
+        private int _spectreInteriorSleepRemainingRounded = -1;
+        private bool _spectreInteriorSleepActive = false;
 
         private double _galCamX = 0.0;
         private double _galCamY = 0.0;
@@ -907,7 +913,7 @@ namespace SolarSystemApp
 
                 string shipName = (_activeInterior != null) ? _activeInterior.ShipName : "Ship";
 
-                var header = new Panel(new Text($"INTERIOR VIEW  |  ship={shipName}  |  F6 exit  |  WASD/arrows move"))
+                var header = new Panel(new Text($"INTERIOR VIEW  |  ship={shipName}  |  F6 exit  |  WASD/arrows move  |  E interact"))
                     .Border(BoxBorder.Rounded)
                     .Header("CONTROLS", Justify.Left);
 
@@ -935,6 +941,9 @@ namespace SolarSystemApp
             int innerH = panelH - 4;
 
             DrawInteriorMapColored(r, innerX, innerY, innerW, innerH);
+
+            if (_activeInterior != null && _activeInterior.CurrentInteractionMode != InteriorSession.InteractionMode.None)
+                DrawInteriorInteractionOverlay(ctx, innerX, innerY, innerW, innerH);
 
             if (!string.IsNullOrEmpty(_msg))
                 r.DrawString(2, ctx.Height - 2, _msg, Colors.BrightGreen, Colors.Black, z: RenderZ.UI_BORDER);
@@ -3082,6 +3091,56 @@ namespace SolarSystemApp
         {
             if (_activeInterior == null) return;
 
+            if (_activeInterior.CurrentInteractionMode != InteriorSession.InteractionMode.None)
+            {
+                if (ctx.Input.WasPressed(ConsoleKey.Escape) || ctx.Input.WasPressed(ConsoleKey.Backspace) || ctx.Input.WasPressed(ConsoleKey.E))
+                {
+                    _activeInterior.CancelInteraction();
+                    return;
+                }
+
+                if (_activeInterior.CurrentInteractionMode == InteriorSession.InteractionMode.Picker)
+                {
+                    int pick = GetNumericKeyPress(ctx);
+                    if (pick >= 0 && _activeInterior.TrySelectInteraction(pick))
+                        return;
+                }
+                else if (_activeInterior.CurrentInteractionMode == InteriorSession.InteractionMode.SleepScreen)
+                {
+                    if (ctx.Input.WasPressed(ConsoleKey.LeftArrow) || ctx.Input.WasPressed(ConsoleKey.A))
+                        _activeInterior.AdjustSleepSelection(-1);
+                    if (ctx.Input.WasPressed(ConsoleKey.RightArrow) || ctx.Input.WasPressed(ConsoleKey.D))
+                        _activeInterior.AdjustSleepSelection(1);
+                    if (ctx.Input.WasPressed(ConsoleKey.UpArrow) || ctx.Input.WasPressed(ConsoleKey.W))
+                        _activeInterior.AdjustSleepSelection(4);
+                    if (ctx.Input.WasPressed(ConsoleKey.DownArrow) || ctx.Input.WasPressed(ConsoleKey.S))
+                        _activeInterior.AdjustSleepSelection(-4);
+
+                    if (ctx.Input.WasPressed(ConsoleKey.Enter))
+                    {
+                        _activeInterior.StartSleep();
+                        if (!_activeInterior.IsSleeping && _activeInterior.SleepSelectedHours == 0)
+                            Flash("Wait time set to 0 hours.");
+                    }
+
+                    if (_activeInterior.IsSleeping)
+                    {
+                        bool finished = _activeInterior.TickSleep(ctx.DeltaTime / 3600.0);
+                        if (finished)
+                            Flash("Rest complete.");
+                    }
+                }
+
+                return;
+            }
+
+            if (ctx.Input.WasPressed(ConsoleKey.E))
+            {
+                if (!_activeInterior.BeginInteractionPicker(radius: 2))
+                    Flash("No interactables within 2 tiles.");
+                return;
+            }
+
             int dx = 0, dy = 0;
 
             if (ctx.Input.WasPressed(ConsoleKey.W) || ctx.Input.WasPressed(ConsoleKey.UpArrow)) dy -= 1;
@@ -3099,6 +3158,141 @@ namespace SolarSystemApp
                 _activeInterior.PlayerX = nx;
                 _activeInterior.PlayerY = ny;
             }
+        }
+
+        private int GetNumericKeyPress(EngineContext ctx)
+        {
+            if (ctx.Input.WasPressed(ConsoleKey.D1) || ctx.Input.WasPressed(ConsoleKey.NumPad1)) return 0;
+            if (ctx.Input.WasPressed(ConsoleKey.D2) || ctx.Input.WasPressed(ConsoleKey.NumPad2)) return 1;
+            if (ctx.Input.WasPressed(ConsoleKey.D3) || ctx.Input.WasPressed(ConsoleKey.NumPad3)) return 2;
+            if (ctx.Input.WasPressed(ConsoleKey.D4) || ctx.Input.WasPressed(ConsoleKey.NumPad4)) return 3;
+            if (ctx.Input.WasPressed(ConsoleKey.D5) || ctx.Input.WasPressed(ConsoleKey.NumPad5)) return 4;
+            if (ctx.Input.WasPressed(ConsoleKey.D6) || ctx.Input.WasPressed(ConsoleKey.NumPad6)) return 5;
+            if (ctx.Input.WasPressed(ConsoleKey.D7) || ctx.Input.WasPressed(ConsoleKey.NumPad7)) return 6;
+            if (ctx.Input.WasPressed(ConsoleKey.D8) || ctx.Input.WasPressed(ConsoleKey.NumPad8)) return 7;
+            if (ctx.Input.WasPressed(ConsoleKey.D9) || ctx.Input.WasPressed(ConsoleKey.NumPad9)) return 8;
+
+            return -1;
+        }
+
+        private void DrawInteriorInteractionOverlay(EngineContext ctx, int innerX, int innerY, int innerW, int innerH)
+        {
+            if (_activeInterior == null) return;
+
+            int panelW = Math.Min(44, innerW);
+            int panelH = Math.Min(12, innerH);
+
+            int panelX = innerX + innerW - panelW;
+            int panelY = innerY;
+
+            if (panelW < 10 || panelH < 6) return;
+
+            int sleepRemainingRounded = (int)Math.Ceiling(_activeInterior.SleepRemainingHours);
+            bool sleepActive = _activeInterior.IsSleeping;
+            if (_spectreInteriorInteractionMode != _activeInterior.CurrentInteractionMode
+                || _spectreInteriorInteractionCount != _activeInterior.InteractionOptions.Count
+                || _spectreInteriorSleepSelectedHours != _activeInterior.SleepSelectedHours
+                || _spectreInteriorSleepRemainingRounded != sleepRemainingRounded
+                || _spectreInteriorSleepActive != sleepActive)
+            {
+                _spectreInteriorInteractionMode = _activeInterior.CurrentInteractionMode;
+                _spectreInteriorInteractionCount = _activeInterior.InteractionOptions.Count;
+                _spectreInteriorSleepSelectedHours = _activeInterior.SleepSelectedHours;
+                _spectreInteriorSleepRemainingRounded = sleepRemainingRounded;
+                _spectreInteriorSleepActive = sleepActive;
+
+                var panel = BuildInteractionPanel(_activeInterior);
+                _spectreInteriorInteractionCache = RenderSpectreToString(panel, panelW);
+            }
+
+            BlitText(ctx.Renderer, panelX, panelY, panelW, panelH, _spectreInteriorInteractionCache,
+                Colors.BrightYellow, Colors.Black, RenderZ.UI_BORDER);
+        }
+
+        private static Panel BuildInteractionPanel(InteriorSession session)
+        {
+            var text = new Text(BuildInteractionPanelText(session));
+            var panel = new Panel(text)
+                .Border(BoxBorder.Rounded)
+                .Header("INTERACTION", Justify.Left);
+
+            return panel;
+        }
+
+        private static string BuildInteractionPanelText(InteriorSession session)
+        {
+            switch (session.CurrentInteractionMode)
+            {
+                case InteriorSession.InteractionMode.Picker:
+                    return BuildInteractionPickerText(session);
+                case InteriorSession.InteractionMode.NavigationScreen:
+                    return "Navigation Console\n\nPlot a course or review systems.\n\n[Esc] Close";
+                case InteriorSession.InteractionMode.SleepScreen:
+                    return BuildSleepScreenText(session);
+                default:
+                    return string.Empty;
+            }
+        }
+
+        private static string BuildInteractionPickerText(InteriorSession session)
+        {
+            if (session.InteractionOptions.Count == 0)
+                return "No interactables nearby.\n\n[Esc] Close";
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("Select an interaction:");
+            sb.AppendLine();
+
+            int max = Math.Min(9, session.InteractionOptions.Count);
+            for (int i = 0; i < max; i++)
+            {
+                var option = session.InteractionOptions[i];
+                string label = InteriorSession.GetInteractionLabel(option.Kind);
+                sb.AppendLine($"{i + 1}. {label} ({option.Glyph}) @ {option.X},{option.Y}");
+            }
+
+            if (session.InteractionOptions.Count > max)
+                sb.AppendLine("...");
+
+            sb.AppendLine();
+            sb.Append("[Esc] Close");
+            return sb.ToString();
+        }
+
+        private static string BuildSleepScreenText(InteriorSession session)
+        {
+            int hours = session.SleepSelectedHours;
+            int maxHours = 24;
+            int barWidth = maxHours;
+            int clamped = Math.Max(0, Math.Min(maxHours, hours));
+
+            var sb = new System.Text.StringBuilder();
+            sb.AppendLine("Crew Quarters");
+            sb.AppendLine();
+            sb.AppendLine($"Duration: {clamped}h");
+            sb.Append('[');
+            for (int i = 0; i < barWidth; i++)
+            {
+                sb.Append(i < clamped ? '=' : '.');
+            }
+            sb.AppendLine("]");
+
+            if (session.IsSleeping)
+            {
+                sb.AppendLine();
+                sb.AppendLine($"Sleeping... {session.SleepRemainingHours:0.0}h remaining");
+                sb.AppendLine();
+                sb.Append("[Esc] Cancel");
+            }
+            else
+            {
+                sb.AppendLine();
+                sb.AppendLine("Left/Right: -/+1h  Up/Down: -/+4h");
+                sb.AppendLine("Enter: Start wait/sleep");
+                sb.Append("[Esc] Close");
+            }
+
+            return sb.ToString();
         }
 
         private void Flash(string msg)
