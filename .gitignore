@@ -1,0 +1,21 @@
+# Build outputs
+**/bin/
+**/obj/
+
+# Visual Studio
+.vs/
+*.user
+*.suo
+
+# Rider / JetBrains
+.idea/
+
+# OS junk
+Thumbs.db
+.DS_Store
+
+# Logs
+*.log
+
+# Optional: patch files
+*.patch
