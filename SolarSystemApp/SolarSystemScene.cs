@@ -19,7 +19,7 @@ using Colors = global::AsciiEngine.Colors;
 
 namespace SolarSystemApp
 {
-    public sealed partial class SolarSystemScene : IAsciiApp
+    public sealed class SolarSystemScene : IAsciiApp
     {
         // =========================
         // View / Camera (keep old fields to avoid breaking SaveManager usage)
