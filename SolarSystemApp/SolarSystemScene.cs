@@ -314,13 +314,53 @@ namespace SolarSystemApp
         {
             double dt = ctx.DeltaTime;
 
-            if (_msgTimer > 0)
+            UpdateMessageTimer(dt);
+            HandleSaveLoad(ctx);
+            HandleFxToggles(ctx);
+            HandleInteriorToggle(ctx);
+            HandleGalaxyViewToggle(ctx);
+            HandleFastPanToggle(ctx);
+            HandleGlyphToggle(ctx);
+            HandleTextureMode(ctx);
+            HandleDisplayToggles(ctx);
+            HandleOrbitModelToggle(ctx);
+            HandlePauseToggle(ctx);
+            HandleTimeScale(ctx);
+            HandleZoom(ctx);
+            HandleOrbitSquash(ctx);
+
+            bool prev = ctx.Input.WasPressed(ConsoleKey.Z);
+            bool next = ctx.Input.WasPressed(ConsoleKey.X);
+            if (HandleSelectionCycle(ctx, prev, next))
             {
-                _msgTimer -= dt;
-                if (_msgTimer <= 0) _msg = "";
+                return;
             }
 
-            // Save / load (unchanged signature)
+            HandleFollowToggle(ctx);
+            HandleCameraCenter(ctx);
+            HandleSpawnShip(ctx);
+            HandleSpawnStation(ctx);
+            HandleArmShip(ctx);
+            HandleTravelOrder(ctx);
+            HandleOrbitOrder(ctx);
+            HandleJobAssignment(ctx);
+
+            if (!_interiorView)
+                HandleSystemPanning(ctx);
+
+            AdvanceSimulation(dt);
+            UpdateCameraFollow(ctx);
+        }
+
+        private void UpdateMessageTimer(double dt)
+        {
+            if (_msgTimer <= 0) return;
+            _msgTimer -= dt;
+            if (_msgTimer <= 0) _msg = "";
+        }
+
+        private void HandleSaveLoad(EngineContext ctx)
+        {
             if (ctx.Input.WasPressed(ConsoleKey.F5))
             {
                 bool ok = SaveManager.Save(_galaxy, _systemIndex, _simTime, _timeScale, _paused,
@@ -376,12 +416,16 @@ namespace SolarSystemApp
                     _events.Add(_simTime, "Load FAILED");
                 }
             }
+        }
 
+        private void HandleFxToggles(EngineContext ctx)
+        {
             if (ctx.Input.WasPressed(ConsoleKey.F2)) _fxEnabled = !_fxEnabled;
             if (ctx.Input.WasPressed(ConsoleKey.F3)) _fxLensFlare = !_fxLensFlare;
-            
+        }
 
-
+        private void HandleInteriorToggle(EngineContext ctx)
+        {
             // Toggle Interior View (F6) - later we’ll gate this behind “docked”
             if (!_galaxyView && ctx.Input.WasPressed(ConsoleKey.F6))
             {
@@ -392,99 +436,116 @@ namespace SolarSystemApp
             // If we’re in interior view, we consume movement keys here and skip world controls.
             // We still keep simulation + camera smoothing running via the existing code below.
             if (_interiorView)
-            {
                 UpdateInteriorControls(ctx);
-            }
+        }
 
-            // Toggle galaxy view
-            if (ctx.Input.WasPressed(ConsoleKey.G))
+        private void HandleGalaxyViewToggle(EngineContext ctx)
+        {
+            if (!ctx.Input.WasPressed(ConsoleKey.G)) return;
+
+            _galaxyView = !_galaxyView;
+            if (_galaxyView)
             {
-                _galaxyView = !_galaxyView;
-                if (_galaxyView)
-                {
-                    _galCamX = _sys.GalaxyX;
-                    _galCamY = _sys.GalaxyY;
-                }
+                _galCamX = _sys.GalaxyX;
+                _galCamY = _sys.GalaxyY;
             }
+        }
 
-            // Fast pan toggle (P)
-            if (ctx.Input.WasPressed(ConsoleKey.P))
+        private void HandleFastPanToggle(EngineContext ctx)
+        {
+            if (!ctx.Input.WasPressed(ConsoleKey.P)) return;
+
+            _fastPan = !_fastPan;
+            Flash(_fastPan ? "Fast pan ON" : "Fast pan OFF");
+        }
+
+        private void HandleGlyphToggle(EngineContext ctx)
+        {
+            if (!ctx.Input.WasPressed(ConsoleKey.R)) return;
+
+            _glyphMode = _glyphMode switch
             {
-                _fastPan = !_fastPan;
-                Flash(_fastPan ? "Fast pan ON" : "Fast pan OFF");
-            }
+                GlyphMode.RampLong => GlyphMode.RampBlocks,
+                GlyphMode.RampBlocks => GlyphMode.RampShort,
+                GlyphMode.RampShort => GlyphMode.SolidColorOnly,
+                _ => GlyphMode.RampLong,
+            };
 
-            // Ramp toggle
-            if (ctx.Input.WasPressed(ConsoleKey.R))
+            ApplyGlyphMode();
+        }
+
+        private void ApplyGlyphMode()
+        {
+            switch (_glyphMode)
             {
-                _glyphMode = _glyphMode switch
-                {
-                    GlyphMode.RampLong => GlyphMode.RampBlocks,
-                    GlyphMode.RampBlocks => GlyphMode.RampShort,
-                    GlyphMode.RampShort => GlyphMode.SolidColorOnly,
-                    _ => GlyphMode.RampLong,
-                };
+                case GlyphMode.RampLong:
+                    PlanetDrawer.Ramp = RampLong;
+                    PlanetDrawer.PlanetColorOnlyShading = false;
+                    PlanetDrawer.ForceRampShading = false;
+                    break;
 
-                switch (_glyphMode)
-                {
-                    case GlyphMode.RampLong:
-                        PlanetDrawer.Ramp = RampLong;
-                        PlanetDrawer.PlanetColorOnlyShading = false;
-                        PlanetDrawer.ForceRampShading = false;
-                        break;
+                case GlyphMode.RampBlocks:
+                    PlanetDrawer.Ramp = RampBlocks;
+                    PlanetDrawer.PlanetColorOnlyShading = false;
+                    PlanetDrawer.ForceRampShading = true;   // important for block ramp look
+                    break;
 
-                    case GlyphMode.RampBlocks:
-                        PlanetDrawer.Ramp = RampBlocks;
-                        PlanetDrawer.PlanetColorOnlyShading = false;
-                        PlanetDrawer.ForceRampShading = true;   // important for block ramp look
-                        break;
+                case GlyphMode.RampShort:
+                    PlanetDrawer.Ramp = RampShort;
+                    PlanetDrawer.PlanetColorOnlyShading = false;
+                    PlanetDrawer.ForceRampShading = false;
+                    break;
 
-                    case GlyphMode.RampShort:
-                        PlanetDrawer.Ramp = RampShort;
-                        PlanetDrawer.PlanetColorOnlyShading = false;
-                        PlanetDrawer.ForceRampShading = false;
-                        break;
-
-                    case GlyphMode.SolidColorOnly:
-                        // Ramp can stay whatever; it won't be used while PlanetColorOnlyShading == true
-                        PlanetDrawer.PlanetColorOnlyShading = true;   // the "forced solid" line will trigger
-                        PlanetDrawer.ForceRampShading = false;
-                        break;
-                }
+                case GlyphMode.SolidColorOnly:
+                    // Ramp can stay whatever; it won't be used while PlanetColorOnlyShading == true
+                    PlanetDrawer.PlanetColorOnlyShading = true;   // the "forced solid" line will trigger
+                    PlanetDrawer.ForceRampShading = false;
+                    break;
             }
+        }
 
-            // Texture modes
+        private void HandleTextureMode(EngineContext ctx)
+        {
             if (ctx.Input.WasPressed(ConsoleKey.D1)) _texMode = 1;
             if (ctx.Input.WasPressed(ConsoleKey.D2)) _texMode = 2;
             if (ctx.Input.WasPressed(ConsoleKey.D3)) _texMode = 3;
+        }
 
-            // Toggles
+        private void HandleDisplayToggles(EngineContext ctx)
+        {
             if (ctx.Input.WasPressed(ConsoleKey.O)) _showOrbits = !_showOrbits;
             if (ctx.Input.WasPressed(ConsoleKey.B)) _showBelts = !_showBelts;
             if (ctx.Input.WasPressed(ConsoleKey.H)) _showRings = !_showRings;
             if (ctx.Input.WasPressed(ConsoleKey.L)) _showLabels = !_showLabels;
             if (ctx.Input.WasPressed(ConsoleKey.F1)) _showStarfield = !_showStarfield;
+        }
 
-            // Orbit model toggle
-            if (ctx.Input.WasPressed(ConsoleKey.T))
-            {
-                _useKepler = !_useKepler;
-                Flash(_useKepler ? "Orbit model: KEPLER" : "Orbit model: CIRCULAR");
-                _events.Add(_simTime, _useKepler ? "Orbit model: KEPLER" : "Orbit model: CIRCULAR");
-            }
+        private void HandleOrbitModelToggle(EngineContext ctx)
+        {
+            if (!ctx.Input.WasPressed(ConsoleKey.T)) return;
 
-            // Pause (system view only)
+            _useKepler = !_useKepler;
+            Flash(_useKepler ? "Orbit model: KEPLER" : "Orbit model: CIRCULAR");
+            _events.Add(_simTime, _useKepler ? "Orbit model: KEPLER" : "Orbit model: CIRCULAR");
+        }
+
+        private void HandlePauseToggle(EngineContext ctx)
+        {
             if (ctx.Input.WasPressed(ConsoleKey.Spacebar) && !_galaxyView && !_interiorView)
                 _paused = !_paused;
+        }
 
-            // Time scale
+        private void HandleTimeScale(EngineContext ctx)
+        {
             if (ctx.Input.WasPressed(ConsoleKey.OemPlus) || ctx.Input.WasPressed(ConsoleKey.Add))
                 _timeScale *= 1.25;
             if (ctx.Input.WasPressed(ConsoleKey.OemMinus) || ctx.Input.WasPressed(ConsoleKey.Subtract))
                 _timeScale /= 1.25;
             _timeScale = MathUtil.Clamp(_timeScale, 0.05, 10.0);
+        }
 
-            // Zoom (system view uses smooth + anchored zoom; galaxy view stays as-is)
+        private void HandleZoom(EngineContext ctx)
+        {
             if (ctx.Input.WasPressed(ConsoleKey.U))
             {
                 if (_galaxyView)
@@ -526,20 +587,20 @@ namespace SolarSystemApp
 
             // System zoom is now driven by _cam targets (smooth)
             _cam.ClampZoom(1.0, 80.0);
+        }
 
-            // Squash
-            if (!_galaxyView)
-            {
-                if (ctx.Input.WasPressed(ConsoleKey.I)) _orbitYScale += 0.03;
-                if (ctx.Input.WasPressed(ConsoleKey.K)) _orbitYScale -= 0.03;
-                _orbitYScale = MathUtil.Clamp(_orbitYScale, 0.20, 1.20);
-                _cam.TargetOrbitYScale = _orbitYScale;
-            }
+        private void HandleOrbitSquash(EngineContext ctx)
+        {
+            if (_galaxyView) return;
 
-            // Selection cycle
-            bool prev = ctx.Input.WasPressed(ConsoleKey.Z);
-            bool next = ctx.Input.WasPressed(ConsoleKey.X);
+            if (ctx.Input.WasPressed(ConsoleKey.I)) _orbitYScale += 0.03;
+            if (ctx.Input.WasPressed(ConsoleKey.K)) _orbitYScale -= 0.03;
+            _orbitYScale = MathUtil.Clamp(_orbitYScale, 0.20, 1.20);
+            _cam.TargetOrbitYScale = _orbitYScale;
+        }
 
+        private bool HandleSelectionCycle(EngineContext ctx, bool prev, bool next)
+        {
             if (_galaxyView)
             {
                 if (prev) _systemIndex = MathUtil.WrapIndex(_systemIndex - 1, _galaxy.Systems.Count);
@@ -557,146 +618,153 @@ namespace SolarSystemApp
                 }
 
                 HandleGalaxyPanning(ctx);
-                return;
+                return true;
+            }
+
+            if (prev || next)
+            {
+                if (_selection.Count == 0) RebuildSelection();
+                if (_selection.Count > 0)
+                {
+                    _selIndex = MathUtil.WrapIndex(_selIndex + (next ? 1 : -1), _selection.Count);
+                    _follow = false;
+                }
+            }
+
+            return false;
+        }
+
+        private void HandleFollowToggle(EngineContext ctx)
+        {
+            if (!ctx.Input.WasPressed(ConsoleKey.F)) return;
+
+            _follow = !_follow;
+            Flash(_follow ? "Follow ON" : "Follow OFF");
+        }
+
+        private void HandleCameraCenter(EngineContext ctx)
+        {
+            if (!ctx.Input.WasPressed(ConsoleKey.C)) return;
+
+            _follow = false;
+            _cam.TargetCamWX = 0.0;
+            _cam.TargetCamWY = 0.0;
+            _cam.CamWX = 0.0;
+            _cam.CamWY = 0.0; // optional: instant snap instead of easing
+        }
+
+        private void HandleSpawnShip(EngineContext ctx)
+        {
+            if (!ctx.Input.WasPressed(ConsoleKey.Y)) return;
+
+            SpawnShipNearSun();
+            RebuildSelection();
+            Flash("Spawned ship");
+            _events.Add(_simTime, "Spawned ship near sun");
+        }
+
+        private void HandleSpawnStation(EngineContext ctx)
+        {
+            if (!ctx.Input.WasPressed(ConsoleKey.Q)) return;
+
+            var sel = GetSelection();
+            if (sel != null && sel.Kind == EntityKind.Planet)
+            {
+                SpawnStationAroundPlanet(sel.Index);
+                RebuildSelection();
+                Flash("Spawned station");
+                _events.Add(_simTime, $"Spawned station near {sel.Label}");
             }
             else
             {
-                if (prev || next)
+                Flash("Select a PLANET to spawn station (Q)");
+            }
+        }
+
+        private void HandleArmShip(EngineContext ctx)
+        {
+            if (!ctx.Input.WasPressed(ConsoleKey.E)) return;
+
+            var sel = GetSelection();
+            if (sel != null && sel.Kind == EntityKind.Ship)
+            {
+                _armedShipIndex = sel.Index;
+                Flash($"Armed ship: {_sys.Ships[_armedShipIndex].Name}");
+                _events.Add(_simTime, $"Armed ship: {_sys.Ships[_armedShipIndex].Name}");
+            }
+            else
+            {
+                _armedShipIndex = -1;
+                Flash("No ship selected (E)");
+            }
+        }
+
+        private void HandleTravelOrder(EngineContext ctx)
+        {
+            if (!ctx.Input.WasPressed(ConsoleKey.V)) return;
+
+            if (_armedShipIndex < 0 || _armedShipIndex >= _sys.Ships.Count)
+            {
+                Flash("No armed ship (press E on a ship)");
+            }
+            else
+            {
+                var target = GetSelection();
+                if (target == null)
                 {
-                    if (_selection.Count == 0) RebuildSelection();
-                    if (_selection.Count > 0)
-                    {
-                        _selIndex = MathUtil.WrapIndex(_selIndex + (next ? 1 : -1), _selection.Count);
-                        _follow = false;
-                    }
-                }
-            }
-
-            // Follow toggle
-            if (ctx.Input.WasPressed(ConsoleKey.F))
-            {
-                _follow = !_follow;
-                Flash(_follow ? "Follow ON" : "Follow OFF");
-            }
-
-            // Center camera on sun
-            if (ctx.Input.WasPressed(ConsoleKey.C))
-            {
-                _follow = false;
-                _cam.TargetCamWX = 0.0;
-                _cam.TargetCamWY = 0.0;
-                _cam.CamWX = 0.0;
-                _cam.CamWY = 0.0; // optional: instant snap instead of easing
-            }
-
-            // Spawn ship
-            if (ctx.Input.WasPressed(ConsoleKey.Y))
-            {
-                SpawnShipNearSun();
-                RebuildSelection();
-                Flash("Spawned ship");
-                _events.Add(_simTime, "Spawned ship near sun");
-            }
-
-            // Spawn station around selected planet
-            if (ctx.Input.WasPressed(ConsoleKey.Q))
-            {
-                var sel = GetSelection();
-                if (sel != null && sel.Kind == EntityKind.Planet)
-                {
-                    SpawnStationAroundPlanet(sel.Index);
-                    RebuildSelection();
-                    Flash("Spawned station");
-                    _events.Add(_simTime, $"Spawned station near {sel.Label}");
+                    Flash("No target selected");
                 }
                 else
                 {
-                    Flash("Select a PLANET to spawn station (Q)");
+                    IssueTravelOrder(_sys.Ships[_armedShipIndex], target);
+                    Flash($"Order: {_sys.Ships[_armedShipIndex].Name} -> {target.Label}");
+                    _events.Add(_simTime, $"Order travel: {_sys.Ships[_armedShipIndex].Name} -> {target.Label}");
                 }
             }
+        }
 
-            // Arm ship (E)
-            if (ctx.Input.WasPressed(ConsoleKey.E))
+        private void HandleOrbitOrder(EngineContext ctx)
+        {
+            if (!ctx.Input.WasPressed(ConsoleKey.N)) return;
+
+            if (!TryGetArmedShip(out var ship))
             {
-                var sel = GetSelection();
-                if (sel != null && sel.Kind == EntityKind.Ship)
-                {
-                    _armedShipIndex = sel.Index;
-                    Flash($"Armed ship: {_sys.Ships[_armedShipIndex].Name}");
-                    _events.Add(_simTime, $"Armed ship: {_sys.Ships[_armedShipIndex].Name}");
-                }
+                Flash("No armed ship (press E on a ship)");
+            }
+            else
+            {
+                var target = GetSelection();
+                if (target == null) { Flash("No target selected"); }
                 else
                 {
-                    _armedShipIndex = -1;
-                    Flash("No ship selected (E)");
+                    IssueOrbitOrder(ship, target);
+                    Flash($"Orbit: {ship.Name} around {target.Label}");
+                    _events.Add(_simTime, $"Order orbit: {ship.Name} around {target.Label}");
                 }
             }
+        }
 
-            // Issue order: armed ship travel to selected target (V)
-            if (ctx.Input.WasPressed(ConsoleKey.V))
+        private void HandleJobAssignment(EngineContext ctx)
+        {
+            if (!ctx.Input.WasPressed(ConsoleKey.M)) return;
+
+            if (!TryGetArmedShip(out var ship))
             {
-                if (_armedShipIndex < 0 || _armedShipIndex >= _sys.Ships.Count)
-                {
-                    Flash("No armed ship (press E on a ship)");
-                }
-                else
-                {
-                    var target = GetSelection();
-                    if (target == null)
-                    {
-                        Flash("No target selected");
-                    }
-                    else
-                    {
-                        IssueTravelOrder(_sys.Ships[_armedShipIndex], target);
-                        Flash($"Order: {_sys.Ships[_armedShipIndex].Name} -> {target.Label}");
-                        _events.Add(_simTime, $"Order travel: {_sys.Ships[_armedShipIndex].Name} -> {target.Label}");
-                    }
-                }
+                Flash("No armed ship (press E on a ship)");
             }
-
-            // N = ORBIT selected target
-            if (ctx.Input.WasPressed(ConsoleKey.N))
+            else
             {
-                if (!TryGetArmedShip(out var ship))
-                {
-                    Flash("No armed ship (press E on a ship)");
-                }
-                else
-                {
-                    var target = GetSelection();
-                    if (target == null) { Flash("No target selected"); }
-                    else
-                    {
-                        IssueOrbitOrder(ship, target);
-                        Flash($"Orbit: {ship.Name} around {target.Label}");
-                        _events.Add(_simTime, $"Order orbit: {ship.Name} around {target.Label}");
-                    }
-                }
+                var st = _jobs.GetOrCreate(ship.Name);
+                st.Job = ShipJobType.Mine;
+                st.Accumulator = 0;
+                st.TargetLabel = "Local space";
+                Flash($"Job: {ship.Name} -> MINE");
+                _events.Add(_simTime, $"Job set: {ship.Name} -> MINE");
             }
+        }
 
-            // NEW: assign a simple job to the ARMED ship
-            if (ctx.Input.WasPressed(ConsoleKey.M))
-            {
-                if (!TryGetArmedShip(out var ship))
-                {
-                    Flash("No armed ship (press E on a ship)");
-                }
-                else
-                {
-                    var st = _jobs.GetOrCreate(ship.Name);
-                    st.Job = ShipJobType.Mine;
-                    st.Accumulator = 0;
-                    st.TargetLabel = "Local space";
-                    Flash($"Job: {ship.Name} -> MINE");
-                    _events.Add(_simTime, $"Job set: {ship.Name} -> MINE");
-                }
-            }
-
-            // System panning (and cancels follow)
-            if (!_interiorView)
-                HandleSystemPanning(ctx);
-
+        private void AdvanceSimulation(double dt)
+        {
             // --- PERF/STABILITY: clamp dt to avoid "spiral of death" on hitches ---
             if (dt > 0.25) dt = 0.25;
 
@@ -725,7 +793,10 @@ namespace SolarSystemApp
                 StarSystemLogic.UpdateCelestials(_sys, _simTime, _useKepler);
                 RefreshShipOrbitCenters(_sys);
             }
+        }
 
+        private void UpdateCameraFollow(EngineContext ctx)
+        {
             // Follow camera
             if (_follow)
             {
