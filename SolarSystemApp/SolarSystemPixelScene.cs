@@ -1,45 +1,130 @@
 using System;
+using System.Collections.Generic;
 using AsciiEngine;
 using SolarSystemApp.Rendering;
 using SolarSystemApp.Util;
 using SolarSystemApp.World;
+using Color = global::AsciiEngine.Color;
+using Colors = global::AsciiEngine.Colors;
 
 namespace SolarSystemApp
 {
     public sealed class SolarSystemPixelScene : IPixelApp
     {
         private const double SimStep = 1.0 / 60.0;
+        private const double ZoomStep = 1.12;
+        private const int StarCount = 220;
+        private const double StarSpan = 120.0;
+        private const int DebrisCount = 180;
+        private const double DebrisSpan = 32.0;
+        private const double DebrisMaxV = 0.22;
+        private const double BlackHoleChanceFallback = 0.12;
 
         private readonly Galaxy _galaxy = new Galaxy();
-        private readonly PixelCamera2D _camera = new PixelCamera2D();
-        private readonly PixelSystemRenderer _renderer;
-
         private StarSystem? _sys;
+        private int _systemIndex;
+        private int _galaxySelectionIndex;
+
+        private double _worldToScreen = 10.0;
+        private double _orbitYScale = 0.55;
+        private double _camWX;
+        private double _camWY;
+        private double _targetCamWX;
+        private double _targetCamWY;
+        private double _targetWorldToScreen = 10.0;
+        private double _targetOrbitYScale = 0.55;
+        private int _centerX;
+        private int _centerY;
+
+        private bool _smoothCam = true;
+        private double _panResponsiveness = 14.0;
+        private double _zoomResponsiveness = 18.0;
+
+        private bool _follow;
+        private double _followLerp = 0.18;
+
         private double _simTime;
-        private double _simAccum;
         private double _timeScale = 1.0;
         private bool _paused;
-        private bool _follow = true;
-        private bool _showOrbits = true;
+        private double _simAccum;
         private bool _useKepler = true;
-        private bool _showDebugOverlay;
 
-        private Planet? _selectedPlanet;
-        private Station? _selectedStation;
-        private Ship? _selectedShip;
+        private bool _showOrbits = true;
+        private bool _showLabels = true;
+        private bool _showStarfield = true;
+        private bool _showDebris = true;
+        private bool _showNebula = true;
 
-        public SolarSystemPixelScene()
+        private bool _galaxyView;
+        private double _galCamX;
+        private double _galCamY;
+        private double _galZoom = 1.6;
+
+        private readonly List<SelectionItem> _selection = new List<SelectionItem>(64);
+        private int _selIndex;
+
+        private StarPt[] _starPts = Array.Empty<StarPt>();
+        private int _starSeedBuilt = int.MinValue;
+
+        private DebrisPt[] _debris = Array.Empty<DebrisPt>();
+        private int _debrisSeedBuilt = int.MinValue;
+
+        private int _forcedBlackHoleSystemIndex = -1;
+
+        private readonly EventLog _events = new EventLog(10);
+        private readonly PixelFont _font = new PixelFont();
+
+        private struct StarPt
         {
-            _renderer = new PixelSystemRenderer(_camera);
+            public double WX;
+            public double WY;
+            public double Depth;
+        }
+
+        private struct DebrisPt
+        {
+            public double WX;
+            public double WY;
+            public double VX;
+            public double VY;
+            public double Depth;
+        }
+
+        private enum SelectionKind
+        {
+            Sun,
+            Planet,
+            Moon,
+            Station,
+            Ship,
+            Asteroid,
+            Nebula
+        }
+
+        private struct SelectionItem
+        {
+            public SelectionKind Kind;
+            public int Index;
+            public int SubIndex;
+            public string Label;
+            public double WX;
+            public double WY;
+            public double WZ;
         }
 
         public void Init(PixelEngineContext ctx)
         {
             _galaxy.Build(seed: 12345, count: 100);
-            _sys = _galaxy.Get(0);
 
+            if (_galaxy.Systems.Count > 0)
+            {
+                double r01 = HashNoise.Hash01(12345 ^ 0xB00F, 901, 777);
+                _forcedBlackHoleSystemIndex = MathUtil.ClampInt((int)Math.Floor(r01 * _galaxy.Systems.Count), 0, _galaxy.Systems.Count - 1);
+            }
+
+            SetActiveSystem(0, resetSimTime: true);
             FitSystemToView(ctx);
-            _camera.Snap(0.0, 0.0, _camera.Zoom);
+            SnapCamera(0.0, 0.0, _worldToScreen, _orbitYScale);
         }
 
         public void Update(PixelEngineContext ctx)
@@ -47,36 +132,77 @@ namespace SolarSystemApp
             double dt = ctx.DeltaTime;
 
             HandleInput(ctx);
-            AdvanceSimulation(dt);
 
-            if (_follow)
+            if (!_galaxyView)
             {
-                _camera.TargetX = 0.0;
-                _camera.TargetY = 0.0;
+                AdvanceSimulation(dt);
+                UpdateCamera(dt);
             }
-
-            _camera.SetViewport(ctx.Width, ctx.Height);
-            _camera.Update(dt);
         }
 
         public void Draw(PixelEngineContext ctx)
         {
             PixelRenderer renderer = ctx.Renderer;
-            renderer.Clear(Color.FromRgb(8, 8, 16));
+            renderer.Clear(Color.FromRgb(6, 8, 16));
+
+            _centerX = ctx.Width / 2;
+            _centerY = ctx.Height / 2;
+
+            if (_galaxyView)
+            {
+                DrawGalaxyView(renderer, ctx);
+                DrawGalaxyUi(renderer, ctx);
+                return;
+            }
 
             if (_sys == null)
+            {
+                DrawText(renderer, 4, 4, "NO SYSTEM", Colors.BrightWhite);
                 return;
+            }
 
-            _renderer.DrawSystem(renderer, _sys, _showOrbits);
+            if (_showStarfield)
+                DrawStarfield(renderer, ctx);
+
+            if (_showNebula)
+                DrawNebula(renderer);
+
+            DrawAsteroids(renderer, ctx);
+
+            if (_showDebris)
+                DrawDebris(renderer, ctx);
+
+            if (_showOrbits)
+                DrawOrbits(renderer);
+
+            if (IsBlackHoleSystem(_sys, _systemIndex))
+                DrawBlackHole(renderer);
+            else
+                DrawSun(renderer);
+
+            DrawPlanets(renderer);
+            DrawStations(renderer);
+            DrawShips(renderer);
             DrawSelection(renderer);
-
-            if (_showDebugOverlay)
-                DrawDebugOverlay(ctx);
+            DrawUi(renderer, ctx);
         }
 
         private void HandleInput(PixelEngineContext ctx)
         {
             InputState input = ctx.Input;
+
+            if (input.WasPressed(ConsoleKey.G))
+            {
+                _galaxyView = !_galaxyView;
+                if (_galaxyView)
+                    _galaxySelectionIndex = _systemIndex;
+            }
+
+            if (_galaxyView)
+            {
+                HandleGalaxyInput(input);
+                return;
+            }
 
             if (input.WasPressed(ConsoleKey.Spacebar))
                 _paused = !_paused;
@@ -84,186 +210,94 @@ namespace SolarSystemApp
             if (input.WasPressed(ConsoleKey.O))
                 _showOrbits = !_showOrbits;
 
+            if (input.WasPressed(ConsoleKey.L))
+                _showLabels = !_showLabels;
+
+            if (input.WasPressed(ConsoleKey.H))
+                _showStarfield = !_showStarfield;
+
+            if (input.WasPressed(ConsoleKey.N))
+                _showNebula = !_showNebula;
+
+            if (input.WasPressed(ConsoleKey.B))
+                _showDebris = !_showDebris;
+
+            if (input.WasPressed(ConsoleKey.K))
+                _useKepler = !_useKepler;
+
             if (input.WasPressed(ConsoleKey.F))
                 _follow = !_follow;
 
-            if (input.WasPressed(ConsoleKey.P))
-                _showDebugOverlay = !_showDebugOverlay;
+            if (input.WasPressed(ConsoleKey.Z))
+                CycleSelection(-1);
 
-            int dx, dy;
+            if (input.WasPressed(ConsoleKey.X))
+                CycleSelection(1);
+
+            if (input.WasPressed(ConsoleKey.U) || input.WasPressed(ConsoleKey.OemPlus) || input.WasPressed(ConsoleKey.Add))
+            {
+                _targetWorldToScreen *= ZoomStep;
+                _targetWorldToScreen = MathUtil.Clamp(_targetWorldToScreen, 2.0, 240.0);
+            }
+
+            if (input.WasPressed(ConsoleKey.J) || input.WasPressed(ConsoleKey.OemMinus) || input.WasPressed(ConsoleKey.Subtract))
+            {
+                _targetWorldToScreen /= ZoomStep;
+                _targetWorldToScreen = MathUtil.Clamp(_targetWorldToScreen, 2.0, 240.0);
+            }
+
+            if (input.WasPressed(ConsoleKey.R))
+                FitSystemToView(ctx);
+
+            int dx;
+            int dy;
             input.GetDirectional(out dx, out dy);
             if (dx != 0 || dy != 0)
             {
-                double pan = 0.8;
-                _camera.NudgeTarget(dx * pan, dy * pan);
+                double panPixels = 14.0;
+                double panWorld = panPixels / Math.Max(1.0, _worldToScreen);
+                _targetCamWX += dx * panWorld;
+                _targetCamWY += dy * panWorld;
+                _follow = false;
             }
-
-            if (input.WasPressed(ConsoleKey.OemPlus) || input.WasPressed(ConsoleKey.Add))
-                _camera.MultiplyTargetZoom(1.12, 2.0, 200.0);
-
-            if (input.WasPressed(ConsoleKey.OemMinus) || input.WasPressed(ConsoleKey.Subtract))
-                _camera.MultiplyTargetZoom(1.0 / 1.12, 2.0, 200.0);
-
-            if (input.WasPressed(ConsoleKey.R))
-            {
-                FitSystemToView(ctx);
-                _camera.Snap(0.0, 0.0, _camera.Zoom);
-            }
-
-            if (input.WasPressed(ConsoleKey.Escape))
-                ClearSelection();
-
-            if (input.MouseLeftPressed && _sys != null)
-                SelectAt(input.MouseX, input.MouseY);
 
             if (input.WasPressed(ConsoleKey.T))
                 _timeScale = MathUtil.Clamp(_timeScale * 1.25, 0.25, 6.0);
 
             if (input.WasPressed(ConsoleKey.Y))
                 _timeScale = MathUtil.Clamp(_timeScale / 1.25, 0.25, 6.0);
-
-            if (input.WasPressed(ConsoleKey.K))
-                _useKepler = !_useKepler;
         }
 
-        private void SelectAt(int mouseX, int mouseY)
+        private void HandleGalaxyInput(InputState input)
         {
-            if (_sys == null)
+            if (_galaxy.Systems.Count == 0)
                 return;
 
-            _camera.PixelToWorld(mouseX, mouseY, out double wx, out double wy);
+            if (input.WasPressed(ConsoleKey.Z))
+                _galaxySelectionIndex = MathUtil.WrapIndex(_galaxySelectionIndex - 1, _galaxy.Systems.Count);
 
-            double thresholdWorld = Math.Max(0.15, 6.0 / Math.Max(1.0, _camera.Zoom));
+            if (input.WasPressed(ConsoleKey.X))
+                _galaxySelectionIndex = MathUtil.WrapIndex(_galaxySelectionIndex + 1, _galaxy.Systems.Count);
 
-            Planet? nearestPlanet = null;
-            double nearestPlanetDist = double.MaxValue;
-            for (int i = 0; i < _sys.Planets.Count; i++)
+            int dx;
+            int dy;
+            input.GetDirectional(out dx, out dy);
+            if (dx != 0 || dy != 0)
             {
-                Planet planet = _sys.Planets[i];
-                double dx = planet.WX - wx;
-                double dy = planet.WY - wy;
-                double dist = Math.Sqrt(dx * dx + dy * dy);
-                double capture = planet.RadiusWorld + thresholdWorld;
-                if (dist <= capture && dist < nearestPlanetDist)
-                {
-                    nearestPlanet = planet;
-                    nearestPlanetDist = dist;
-                }
+                _galCamX += dx * 0.8 / Math.Max(0.1, _galZoom);
+                _galCamY += dy * 0.8 / Math.Max(0.1, _galZoom);
             }
 
-            if (nearestPlanet != null)
+            if (input.WasPressed(ConsoleKey.U) || input.WasPressed(ConsoleKey.OemPlus) || input.WasPressed(ConsoleKey.Add))
+                _galZoom = MathUtil.Clamp(_galZoom * 1.1, 0.3, 8.0);
+
+            if (input.WasPressed(ConsoleKey.J) || input.WasPressed(ConsoleKey.OemMinus) || input.WasPressed(ConsoleKey.Subtract))
+                _galZoom = MathUtil.Clamp(_galZoom / 1.1, 0.3, 8.0);
+
+            if (input.WasPressed(ConsoleKey.Enter))
             {
-                _selectedPlanet = nearestPlanet;
-                _selectedStation = null;
-                _selectedShip = null;
-                return;
-            }
-
-            Station? nearestStation = null;
-            double nearestStationDist = double.MaxValue;
-            for (int i = 0; i < _sys.Stations.Count; i++)
-            {
-                Station station = _sys.Stations[i];
-                double dx = station.WX - wx;
-                double dy = station.WY - wy;
-                double dist = Math.Sqrt(dx * dx + dy * dy);
-                if (dist <= thresholdWorld && dist < nearestStationDist)
-                {
-                    nearestStation = station;
-                    nearestStationDist = dist;
-                }
-            }
-
-            if (nearestStation != null)
-            {
-                _selectedPlanet = null;
-                _selectedStation = nearestStation;
-                _selectedShip = null;
-                return;
-            }
-
-            Ship? nearestShip = null;
-            double nearestShipDist = double.MaxValue;
-            for (int i = 0; i < _sys.Ships.Count; i++)
-            {
-                Ship ship = _sys.Ships[i];
-                double dx = ship.WX - wx;
-                double dy = ship.WY - wy;
-                double dist = Math.Sqrt(dx * dx + dy * dy);
-                if (dist <= thresholdWorld && dist < nearestShipDist)
-                {
-                    nearestShip = ship;
-                    nearestShipDist = dist;
-                }
-            }
-
-            if (nearestShip != null)
-            {
-                _selectedPlanet = null;
-                _selectedStation = null;
-                _selectedShip = nearestShip;
-                return;
-            }
-
-            ClearSelection();
-        }
-
-        private void ClearSelection()
-        {
-            _selectedPlanet = null;
-            _selectedStation = null;
-            _selectedShip = null;
-        }
-
-        private void DrawSelection(PixelRenderer renderer)
-        {
-            Color highlight = Color.FromRgb(255, 210, 80);
-
-            if (_selectedPlanet != null)
-            {
-                int cx = _camera.WorldToPixelX(_selectedPlanet.WX);
-                int cy = _camera.WorldToPixelY(_selectedPlanet.WY);
-                int radius = Math.Max(2, (int)Math.Round(_selectedPlanet.RadiusWorld * _camera.Zoom) + 2);
-                renderer.DrawCircle(cx, cy, radius, highlight);
-            }
-            else if (_selectedStation != null)
-            {
-                int cx = _camera.WorldToPixelX(_selectedStation.WX);
-                int cy = _camera.WorldToPixelY(_selectedStation.WY);
-                renderer.DrawRect(cx - 3, cy - 3, 7, 7, highlight);
-            }
-            else if (_selectedShip != null)
-            {
-                int cx = _camera.WorldToPixelX(_selectedShip.WX);
-                int cy = _camera.WorldToPixelY(_selectedShip.WY);
-                renderer.DrawRect(cx - 3, cy - 3, 7, 7, highlight);
-            }
-        }
-
-        private void DrawDebugOverlay(PixelEngineContext ctx)
-        {
-            PixelRenderer renderer = ctx.Renderer;
-            int centerX = ctx.Width / 2;
-            int centerY = ctx.Height / 2;
-
-            Color crossColor = Color.FromRgb(200, 200, 200);
-            renderer.DrawLine(centerX - 4, centerY, centerX + 4, centerY, crossColor);
-            renderer.DrawLine(centerX, centerY - 4, centerX, centerY + 4, crossColor);
-
-            int originX = _camera.WorldToPixelX(0.0);
-            int originY = _camera.WorldToPixelY(0.0);
-            Color axisColor = Color.FromRgb(120, 200, 255);
-            renderer.DrawCircle(originX, originY, 3, axisColor);
-            renderer.DrawLine(originX - 20, originY, originX + 20, originY, axisColor);
-            renderer.DrawLine(originX, originY - 20, originX, originY + 20, axisColor);
-
-            renderer.DrawRect(0, 0, renderer.Width, renderer.Height, Color.FromRgb(255, 255, 255));
-
-            if (_sys != null)
-            {
-                double maxA = GetMaxA();
-                int radius = Math.Max(1, (int)Math.Round(maxA * _camera.Zoom));
-                renderer.DrawCircle(originX, originY, radius, Color.FromRgb(80, 160, 255));
+                SetActiveSystem(_galaxySelectionIndex, resetSimTime: true);
+                _galaxyView = false;
             }
         }
 
@@ -283,7 +317,9 @@ namespace SolarSystemApp
                 {
                     _simTime += SimStep;
                     StarSystemLogic.UpdateCelestials(_sys, _simTime, _useKepler);
+                    RefreshShipOrbitCenters(_sys);
                     StarSystemLogic.UpdateShips(_sys, SimStep);
+                    UpdateDebris(SimStep);
                     _simAccum -= SimStep;
                 }
             }
@@ -293,29 +329,1148 @@ namespace SolarSystemApp
             }
         }
 
+        private void RefreshShipOrbitCenters(StarSystem sys)
+        {
+            for (int i = 0; i < sys.Ships.Count; i++)
+            {
+                Ship sh = sys.Ships[i];
+                if (sh.Mode != ShipMode.Orbit)
+                    continue;
+
+                if (!TryGetOrbitTargetWorld(sys, sh.OrbitTargetKind, sh.OrbitTargetIndex, sh.OrbitTargetSubIndex, out double cx, out double cy))
+                    continue;
+
+                sh.TargetX = cx;
+                sh.TargetY = cy;
+            }
+        }
+
+        private static bool TryGetOrbitTargetWorld(StarSystem sys, OrbitTargetKind kind, int index, int subIndex, out double wx, out double wy)
+        {
+            wx = 0;
+            wy = 0;
+
+            switch (kind)
+            {
+                case OrbitTargetKind.Sun:
+                    wx = 0;
+                    wy = 0;
+                    return true;
+                case OrbitTargetKind.Planet:
+                    if ((uint)index >= (uint)sys.Planets.Count) return false;
+                    wx = sys.Planets[index].WX;
+                    wy = sys.Planets[index].WY;
+                    return true;
+                case OrbitTargetKind.Station:
+                    if ((uint)index >= (uint)sys.Stations.Count) return false;
+                    wx = sys.Stations[index].WX;
+                    wy = sys.Stations[index].WY;
+                    return true;
+                case OrbitTargetKind.Ship:
+                    if ((uint)index >= (uint)sys.Ships.Count) return false;
+                    wx = sys.Ships[index].WX;
+                    wy = sys.Ships[index].WY;
+                    return true;
+                case OrbitTargetKind.Moon:
+                    if ((uint)index >= (uint)sys.Planets.Count) return false;
+                    Planet planet = sys.Planets[index];
+                    if ((uint)subIndex >= (uint)planet.Moons.Count) return false;
+                    wx = planet.Moons[subIndex].WX;
+                    wy = planet.Moons[subIndex].WY;
+                    return true;
+                default:
+                    return false;
+            }
+        }
+
+        private void UpdateCamera(double dt)
+        {
+            _targetOrbitYScale = _orbitYScale;
+
+            if (_follow)
+            {
+                SelectionItem? sel = GetSelection();
+                if (sel.HasValue)
+                {
+                    _targetCamWX = MathUtil.Lerp(_targetCamWX, sel.Value.WX, _followLerp);
+                    _targetCamWY = MathUtil.Lerp(_targetCamWY, sel.Value.WY, _followLerp);
+                }
+            }
+
+            if (!_smoothCam)
+            {
+                _camWX = _targetCamWX;
+                _camWY = _targetCamWY;
+                _worldToScreen = _targetWorldToScreen;
+                _orbitYScale = _targetOrbitYScale;
+                return;
+            }
+
+            double aPan = 1.0 - Math.Exp(-_panResponsiveness * Math.Max(0.0, dt));
+            double aZoom = 1.0 - Math.Exp(-_zoomResponsiveness * Math.Max(0.0, dt));
+
+            _camWX = Lerp(_camWX, _targetCamWX, aPan);
+            _camWY = Lerp(_camWY, _targetCamWY, aPan);
+            _worldToScreen = Lerp(_worldToScreen, _targetWorldToScreen, aZoom);
+            _orbitYScale = Lerp(_orbitYScale, _targetOrbitYScale, aZoom);
+        }
+
+        private void DrawStarfield(PixelRenderer renderer, PixelEngineContext ctx)
+        {
+            EnsureStarfield();
+
+            for (int i = 0; i < _starPts.Length; i++)
+            {
+                StarPt sp = _starPts[i];
+                double depth = sp.Depth;
+                double par = 0.08 + 0.28 * depth;
+
+                double relX = MathUtil.Wrap(sp.WX - _camWX * par, -StarSpan, StarSpan);
+                double relY = MathUtil.Wrap(sp.WY - _camWY * par, -StarSpan, StarSpan);
+
+                int sx = _centerX + (int)Math.Round(relX * _worldToScreen);
+                int sy = _centerY + (int)Math.Round(relY * _worldToScreen * _orbitYScale);
+
+                if ((uint)sx >= (uint)ctx.Width || (uint)sy >= (uint)ctx.Height)
+                    continue;
+
+                Color color = (depth > 0.85) ? Colors.BrightWhite : Colors.BrightBlack;
+                renderer.SetPixel(sx, sy, color);
+            }
+        }
+
+        private void DrawDebris(PixelRenderer renderer, PixelEngineContext ctx)
+        {
+            EnsureDebris();
+
+            for (int i = 0; i < _debris.Length; i++)
+            {
+                DebrisPt d = _debris[i];
+                double par = 0.10 + 0.25 * d.Depth;
+                double wx = d.WX - _camWX * par;
+                double wy = d.WY - _camWY * par;
+
+                int sx = _centerX + (int)Math.Round(wx * _worldToScreen);
+                int sy = _centerY + (int)Math.Round(wy * _worldToScreen * _orbitYScale);
+
+                if ((uint)sx >= (uint)ctx.Width || (uint)sy >= (uint)ctx.Height)
+                    continue;
+
+                Color color = (d.Depth > 0.7) ? Colors.BrightBlack : Color.FromRgb(80, 84, 96);
+                renderer.SetPixel(sx, sy, color);
+            }
+        }
+
+        private void DrawNebula(PixelRenderer renderer)
+        {
+            if (_sys == null || _sys.Nebulae.Count == 0)
+                return;
+
+            for (int i = 0; i < _sys.Nebulae.Count; i++)
+            {
+                NebulaCloud cloud = _sys.Nebulae[i];
+                int cx = WorldToScreenX(cloud.WX);
+                int cy = WorldToScreenY(cloud.WY);
+                int r = Math.Max(2, (int)Math.Round(cloud.RadiusWorld * _worldToScreen));
+                int step = (r > 90) ? 3 : (r > 50 ? 2 : 1);
+                int r2 = r * r;
+
+                Color baseColor = ColorUtils.ToRgbColor((Color)cloud.Fg);
+                double density = MathUtil.Clamp(cloud.Density01, 0.1, 1.0);
+
+                for (int y = -r; y <= r; y += step)
+                {
+                    int yy = y * y;
+                    for (int x = -r; x <= r; x += step)
+                    {
+                        int d2 = x * x + yy;
+                        if (d2 > r2)
+                            continue;
+
+                        double dist = Math.Sqrt(d2) / Math.Max(1.0, r);
+                        double falloff = 1.0 - dist;
+                        double n = HashNoise.ValueNoise(cloud.NoiseSeed, (cx + x) * 0.05, (cy + y) * 0.05);
+                        double alpha = density * falloff * (0.55 + 0.45 * n);
+                        if (alpha < 0.08)
+                            continue;
+
+                        Color color = ColorUtils.Shade(baseColor, MathUtil.Clamp(alpha, 0.1, 1.0));
+                        renderer.FillRect(cx + x, cy + y, step, step, color);
+                    }
+                }
+            }
+        }
+
+        private void DrawOrbits(PixelRenderer renderer)
+        {
+            if (_sys == null)
+                return;
+
+            Color orbitColor = Color.FromRgb(72, 88, 120);
+
+            for (int i = 0; i < _sys.Planets.Count; i++)
+            {
+                Planet planet = _sys.Planets[i];
+                if (planet.A <= 0.0)
+                    continue;
+
+                int steps = Math.Max(120, (int)Math.Round(planet.A * 24));
+                double prevX = 0.0;
+                double prevY = 0.0;
+                bool hasPrev = false;
+
+                for (int s = 0; s <= steps; s++)
+                {
+                    double m = (s / (double)steps) * Math.PI * 2.0;
+                    ComputeOrbitPoint(_sys.Seed, planet, m, out double wx, out double wy);
+
+                    if (hasPrev)
+                    {
+                        renderer.DrawLine(WorldToScreenX(prevX), WorldToScreenY(prevY), WorldToScreenX(wx), WorldToScreenY(wy), orbitColor);
+                    }
+
+                    prevX = wx;
+                    prevY = wy;
+                    hasPrev = true;
+                }
+
+                for (int m = 0; m < planet.Moons.Count; m++)
+                {
+                    Moon moon = planet.Moons[m];
+                    DrawMoonOrbit(renderer, planet, moon, orbitColor);
+                }
+            }
+        }
+
+        private void DrawMoonOrbit(PixelRenderer renderer, Planet planet, Moon moon, Color orbitColor)
+        {
+            int steps = 60;
+            double r = moon.LocalRadius;
+            if (r <= 0.0)
+                return;
+
+            double prevX = 0.0;
+            double prevY = 0.0;
+            bool hasPrev = false;
+
+            for (int s = 0; s <= steps; s++)
+            {
+                double a = (s / (double)steps) * Math.PI * 2.0;
+                double wx = planet.WX + Math.Cos(a) * r;
+                double wy = planet.WY + Math.Sin(a) * r;
+
+                if (hasPrev)
+                    renderer.DrawLine(WorldToScreenX(prevX), WorldToScreenY(prevY), WorldToScreenX(wx), WorldToScreenY(wy), orbitColor);
+
+                prevX = wx;
+                prevY = wy;
+                hasPrev = true;
+            }
+        }
+
+        private void DrawSun(PixelRenderer renderer)
+        {
+            if (_sys == null || !_sys.HasStar || _sys.SunRadiusWorld <= 0.0)
+                return;
+
+            int cx = WorldToScreenX(0.0);
+            int cy = WorldToScreenY(0.0);
+            int radius = Math.Max(2, (int)Math.Round(_sys.SunRadiusWorld * _worldToScreen));
+            int corona = Math.Max(radius + 2, (int)Math.Round(_sys.CoronaRadiusWorld * _worldToScreen));
+
+            Color sunColor = ColorUtils.ToRgbColor((Color)_sys.SunColor);
+            Color coronaColor = ColorUtils.Shade(sunColor, 0.35);
+
+            renderer.DrawCircle(cx, cy, corona, coronaColor);
+            renderer.FillCircle(cx, cy, radius, sunColor);
+        }
+
+        private void DrawBlackHole(PixelRenderer renderer)
+        {
+            int cx = WorldToScreenX(0.0);
+            int cy = WorldToScreenY(0.0);
+
+            int basePx = MathUtil.ClampInt((int)Math.Round(1.2 * _worldToScreen), 7, 22);
+            int shadowR = MathUtil.ClampInt((int)Math.Round(basePx * 1.10), 6, 26);
+            int holeR = MathUtil.ClampInt((int)Math.Round(basePx * 0.85), 5, 22);
+            int ringR = MathUtil.ClampInt((int)Math.Round(basePx * 1.25), 7, 30);
+            int diskR0 = MathUtil.ClampInt((int)Math.Round(basePx * 1.60), 10, 40);
+            int diskR1 = MathUtil.ClampInt((int)Math.Round(basePx * 2.35), 14, 60);
+
+            renderer.FillCircle(cx, cy, shadowR, Colors.Black);
+            renderer.FillCircle(cx, cy, holeR, Colors.Black);
+
+            int ringSteps = Math.Max(120, ringR * 14);
+            for (int i = 0; i < ringSteps; i++)
+            {
+                double a = (i / (double)ringSteps) * Math.PI * 2.0;
+                double ex = Math.Cos(a) * ringR;
+                double ey = Math.Sin(a) * ringR * 0.88;
+                int px = cx + (int)Math.Round(ex);
+                int py = cy + (int)Math.Round(ey);
+                double beam = 0.5 + 0.5 * Math.Cos(a + _simTime * 0.2);
+                beam = Math.Pow(beam, 2.0);
+                Color ringColor = ColorUtils.Shade(Colors.BrightYellow, MathUtil.Clamp(beam, 0.2, 1.0));
+                renderer.SetPixel(px, py, ringColor);
+            }
+
+            double tilt = 0.32;
+            double diskFlat = 0.18;
+            double rot = _simTime * 0.18;
+            double ct = Math.Cos(tilt);
+            double st = Math.Sin(tilt);
+            int bands = 4;
+            int steps = Math.Max(180, diskR1 * 16);
+
+            for (int band = 0; band < bands; band++)
+            {
+                double t = (bands <= 1) ? 0.0 : band / (double)(bands - 1);
+                double rr = MathUtil.Lerp(diskR0, diskR1, t);
+                double radial = Math.Pow(1.0 - t, 0.85);
+
+                for (int si = 0; si < steps; si++)
+                {
+                    double a = (si / (double)steps) * Math.PI * 2.0 - rot;
+                    double x0 = Math.Cos(a) * rr;
+                    double y0 = Math.Sin(a) * rr * diskFlat;
+                    double xr = x0 * ct - y0 * st;
+                    double yr = x0 * st + y0 * ct;
+
+                    int px = cx + (int)Math.Round(xr);
+                    int py = cy + (int)Math.Round(yr);
+
+                    double beam = 0.5 + 0.5 * Math.Cos(a + rot);
+                    beam = Math.Pow(beam, 2.2);
+                    double b = 0.10 + 0.65 * radial;
+                    b *= (0.40 + 0.85 * beam);
+                    b = MathUtil.Clamp(b, 0.0, 1.0);
+
+                    Color diskColor = ColorUtils.Shade(Colors.BrightWhite, b);
+                    renderer.SetPixel(px, py, diskColor);
+                }
+            }
+        }
+
+        private void DrawPlanets(PixelRenderer renderer)
+        {
+            if (_sys == null)
+                return;
+
+            for (int i = 0; i < _sys.Planets.Count; i++)
+            {
+                Planet planet = _sys.Planets[i];
+                DrawBody(renderer, planet.WX, planet.WY, planet.RadiusWorld, planet.Fg, planet.Name, SelectionKind.Planet, i, -1, planet.HasRings);
+
+                for (int m = 0; m < planet.Moons.Count; m++)
+                {
+                    Moon moon = planet.Moons[m];
+                    DrawBody(renderer, moon.WX, moon.WY, moon.RadiusWorld, moon.Fg, moon.Name, SelectionKind.Moon, i, m, false);
+                }
+            }
+        }
+
+        private void DrawAsteroids(PixelRenderer renderer, PixelEngineContext ctx)
+        {
+            if (_sys == null || _sys.Asteroids.Count == 0)
+                return;
+
+            for (int i = 0; i < _sys.Asteroids.Count; i++)
+            {
+                Asteroid asteroid = _sys.Asteroids[i];
+                int x = WorldToScreenX(asteroid.WX);
+                int y = WorldToScreenY(asteroid.WY);
+                if ((uint)x >= (uint)ctx.Width || (uint)y >= (uint)ctx.Height)
+                    continue;
+
+                int r = Math.Max(1, (int)Math.Round(asteroid.RadiusWorld * _worldToScreen));
+                Color c = ColorUtils.ToRgbColor((Color)asteroid.Fg);
+                if (r <= 1)
+                    renderer.SetPixel(x, y, c);
+                else
+                    renderer.FillCircle(x, y, r, c);
+            }
+        }
+
+        private void DrawStations(PixelRenderer renderer)
+        {
+            if (_sys == null)
+                return;
+
+            for (int i = 0; i < _sys.Stations.Count; i++)
+            {
+                Station station = _sys.Stations[i];
+                int x = WorldToScreenX(station.WX);
+                int y = WorldToScreenY(station.WY);
+                renderer.FillRect(x - 2, y - 2, 4, 4, Color.FromRgb(200, 220, 255));
+                renderer.DrawRect(x - 3, y - 3, 6, 6, Color.FromRgb(80, 120, 200));
+
+                if (_showLabels)
+                    DrawText(renderer, x + 4, y - 4, station.Name, Colors.BrightCyan);
+            }
+        }
+
+        private void DrawShips(PixelRenderer renderer)
+        {
+            if (_sys == null)
+                return;
+
+            for (int i = 0; i < _sys.Ships.Count; i++)
+            {
+                Ship ship = _sys.Ships[i];
+                DrawTrail(renderer, ship);
+
+                int x = WorldToScreenX(ship.WX);
+                int y = WorldToScreenY(ship.WY);
+                Color shipColor = ColorUtils.ToRgbColor((Color)ship.Fg);
+                DrawShipGlyph(renderer, x, y, ship.VX, ship.VY, shipColor);
+
+                if (_showLabels)
+                    DrawText(renderer, x + 4, y - 4, ship.Name, Colors.BrightYellow);
+            }
+        }
+
+        private void DrawTrail(PixelRenderer renderer, Ship ship)
+        {
+            int count = 0;
+            foreach (var _ in ship.Trail.Points)
+                count++;
+            if (count == 0)
+                return;
+
+            int idx = 0;
+            Color baseColor = ColorUtils.ToRgbColor((Color)ship.Fg);
+
+            foreach (var pt in ship.Trail.Points)
+            {
+                double t = (count <= 1) ? 1.0 : idx / (double)(count - 1);
+                double fade = 0.2 + 0.6 * t;
+                Color c = ColorUtils.Shade(baseColor, fade);
+
+                int x = WorldToScreenX(pt.x);
+                int y = WorldToScreenY(pt.y);
+                renderer.SetPixel(x, y, c);
+                idx++;
+            }
+        }
+
+        private void DrawShipGlyph(PixelRenderer renderer, int x, int y, double vx, double vy, Color color)
+        {
+            if (Math.Abs(vx) > Math.Abs(vy))
+            {
+                int dir = vx >= 0 ? 1 : -1;
+                renderer.SetPixel(x, y, color);
+                renderer.SetPixel(x - dir, y - 1, color);
+                renderer.SetPixel(x - dir, y + 1, color);
+            }
+            else
+            {
+                int dir = vy >= 0 ? 1 : -1;
+                renderer.SetPixel(x, y, color);
+                renderer.SetPixel(x - 1, y - dir, color);
+                renderer.SetPixel(x + 1, y - dir, color);
+            }
+        }
+
+        private void DrawSelection(PixelRenderer renderer)
+        {
+            SelectionItem? sel = GetSelection();
+            if (!sel.HasValue)
+                return;
+
+            Color highlight = Color.FromRgb(255, 210, 80);
+            SelectionItem item = sel.Value;
+
+            int cx = WorldToScreenX(item.WX);
+            int cy = WorldToScreenY(item.WY);
+            int radius = 6;
+
+            switch (item.Kind)
+            {
+                case SelectionKind.Sun:
+                    radius = Math.Max(6, (int)Math.Round(_sys?.SunRadiusWorld * _worldToScreen ?? 6.0) + 4);
+                    renderer.DrawCircle(cx, cy, radius, highlight);
+                    break;
+                case SelectionKind.Planet:
+                    if (_sys != null && (uint)item.Index < (uint)_sys.Planets.Count)
+                        radius = Math.Max(4, (int)Math.Round(_sys.Planets[item.Index].RadiusWorld * _worldToScreen) + 4);
+                    else
+                        radius = 6;
+                    renderer.DrawCircle(cx, cy, radius, highlight);
+                    break;
+                case SelectionKind.Moon:
+                    if (_sys != null && (uint)item.Index < (uint)_sys.Planets.Count)
+                    {
+                        Planet planet = _sys.Planets[item.Index];
+                        if ((uint)item.SubIndex < (uint)planet.Moons.Count)
+                            radius = Math.Max(3, (int)Math.Round(planet.Moons[item.SubIndex].RadiusWorld * _worldToScreen) + 3);
+                        else
+                            radius = 4;
+                    }
+                    else
+                    {
+                        radius = 4;
+                    }
+                    renderer.DrawCircle(cx, cy, radius, highlight);
+                    break;
+                case SelectionKind.Station:
+                case SelectionKind.Ship:
+                    renderer.DrawRect(cx - 4, cy - 4, 9, 9, highlight);
+                    break;
+                case SelectionKind.Asteroid:
+                    renderer.DrawRect(cx - 3, cy - 3, 7, 7, highlight);
+                    break;
+                case SelectionKind.Nebula:
+                    renderer.DrawCircle(cx, cy, 10, highlight);
+                    break;
+            }
+        }
+
+        private void DrawUi(PixelRenderer renderer, PixelEngineContext ctx)
+        {
+            if (_sys == null)
+                return;
+
+            string header = $"{_sys.Name} [{_sys.Descriptor}]  t={_simTime:0.0}  x{_timeScale:0.0}  zoom={_worldToScreen:0.0}";
+            if (_paused)
+                header += "  PAUSED";
+
+            DrawText(renderer, 4, 4, header, Colors.BrightWhite);
+
+            SelectionItem? sel = GetSelection();
+            if (sel.HasValue)
+            {
+                SelectionItem item = sel.Value;
+                string info = $"Selected: {item.Label} ({item.Kind}) @ {item.WX:0.0},{item.WY:0.0}";
+                DrawText(renderer, 4, 14, info, Colors.BrightYellow);
+            }
+
+            int lineHeight = _font.Height + 2;
+            int line = ctx.Height - lineHeight - 4;
+            foreach (string msg in _events.GetNewestFirst(6))
+            {
+                DrawText(renderer, 4, line, msg, Colors.BrightBlack);
+                line -= lineHeight;
+                if (line < 28)
+                    break;
+            }
+
+            string controls = "WASD/Arrows Pan  U/J Zoom  Z/X Select  F Follow  G Galaxy  O Orbits  L Labels";
+            DrawText(renderer, 4, ctx.Height - 12, controls, Colors.BrightCyan);
+        }
+
+        private void DrawGalaxyView(PixelRenderer renderer, PixelEngineContext ctx)
+        {
+            int w = ctx.Width;
+            int h = ctx.Height;
+            int cx = w / 2;
+            int cy = h / 2;
+
+            Color linkColor = Color.FromRgb(40, 60, 90);
+            for (int i = 0; i < _galaxy.Links.Count; i++)
+            {
+                Galaxy.Link link = _galaxy.Links[i];
+                StarSystem a = _galaxy.Systems[link.A];
+                StarSystem b = _galaxy.Systems[link.B];
+
+                int ax = cx + (int)Math.Round((a.GalaxyX - _galCamX) * 18.0 * _galZoom);
+                int ay = cy + (int)Math.Round((a.GalaxyY - _galCamY) * 18.0 * _galZoom);
+                int bx = cx + (int)Math.Round((b.GalaxyX - _galCamX) * 18.0 * _galZoom);
+                int by = cy + (int)Math.Round((b.GalaxyY - _galCamY) * 18.0 * _galZoom);
+
+                renderer.DrawLine(ax, ay, bx, by, linkColor);
+            }
+
+            for (int i = 0; i < _galaxy.Systems.Count; i++)
+            {
+                StarSystem sys = _galaxy.Systems[i];
+                int sx = cx + (int)Math.Round((sys.GalaxyX - _galCamX) * 18.0 * _galZoom);
+                int sy = cy + (int)Math.Round((sys.GalaxyY - _galCamY) * 18.0 * _galZoom);
+
+                Color c = (i == _galaxySelectionIndex) ? Colors.BrightYellow : Colors.BrightWhite;
+                if (i == _systemIndex)
+                    c = Colors.BrightCyan;
+
+                renderer.FillRect(sx - 1, sy - 1, 3, 3, c);
+            }
+        }
+
+        private void DrawGalaxyUi(PixelRenderer renderer, PixelEngineContext ctx)
+        {
+            DrawText(renderer, 4, 4, "GALAXY VIEW", Colors.BrightWhite);
+            DrawText(renderer, 4, 14, "Z/X Select  Enter Jump  G Back", Colors.BrightCyan);
+
+            if (_galaxy.Systems.Count > 0)
+            {
+                StarSystem sys = _galaxy.Systems[_galaxySelectionIndex];
+                DrawText(renderer, 4, 24, $"{sys.Name} [{sys.Descriptor}]", Colors.BrightYellow);
+            }
+        }
+
+        private void DrawBody(PixelRenderer renderer, double wx, double wy, double radiusWorld, AnsiColor colorAnsi, string label, SelectionKind kind, int index, int subIndex, bool rings)
+        {
+            int cx = WorldToScreenX(wx);
+            int cy = WorldToScreenY(wy);
+            int r = Math.Max(1, (int)Math.Round(radiusWorld * _worldToScreen));
+            Color baseColor = ColorUtils.ToRgbColor((Color)colorAnsi);
+
+            DrawShadedCircle(renderer, cx, cy, r, baseColor, wx, wy);
+
+            if (rings)
+                DrawRings(renderer, cx, cy, r + 3, r + 6, ColorUtils.Shade(baseColor, 0.5));
+
+            if (_showLabels)
+                DrawText(renderer, cx + r + 2, cy - r - 2, label, Colors.BrightWhite);
+        }
+
+        private void DrawShadedCircle(PixelRenderer renderer, int cx, int cy, int r, Color baseColor, double wx, double wy)
+        {
+            if (r <= 0)
+                return;
+
+            double lx = -wx;
+            double ly = -wy;
+            double lz = 0.6;
+            double len = Math.Sqrt(lx * lx + ly * ly + lz * lz);
+            if (len > 0.0001)
+            {
+                lx /= len;
+                ly /= len;
+                lz /= len;
+            }
+
+            int rr = r * r;
+            for (int y = -r; y <= r; y++)
+            {
+                int yy = y * y;
+                for (int x = -r; x <= r; x++)
+                {
+                    int d2 = x * x + yy;
+                    if (d2 > rr)
+                        continue;
+
+                    double nx = x / (double)r;
+                    double ny = y / (double)r;
+                    double nz = Math.Sqrt(Math.Max(0.0, 1.0 - nx * nx - ny * ny));
+                    double dot = Math.Max(0.0, nx * lx + ny * ly + nz * lz);
+                    double shade = 0.2 + 0.8 * dot;
+                    Color c = ColorUtils.Shade(baseColor, shade);
+                    renderer.SetPixel(cx + x, cy + y, c);
+                }
+            }
+        }
+
+        private void DrawRings(PixelRenderer renderer, int cx, int cy, int r0, int r1, Color color)
+        {
+            int steps = Math.Max(120, r1 * 6);
+            for (int i = 0; i < steps; i++)
+            {
+                double a = (i / (double)steps) * Math.PI * 2.0;
+                double x = Math.Cos(a);
+                double y = Math.Sin(a) * 0.55;
+
+                int px0 = cx + (int)Math.Round(x * r0);
+                int py0 = cy + (int)Math.Round(y * r0);
+                int px1 = cx + (int)Math.Round(x * r1);
+                int py1 = cy + (int)Math.Round(y * r1);
+
+                renderer.DrawLine(px0, py0, px1, py1, color);
+            }
+        }
+
+        private void EnsureStarfield()
+        {
+            if (_sys == null)
+                return;
+
+            int seed = _sys.Seed;
+            if (_starSeedBuilt == seed && _starPts.Length == StarCount)
+                return;
+
+            _starSeedBuilt = seed;
+            _starPts = new StarPt[StarCount];
+
+            for (int i = 0; i < StarCount; i++)
+            {
+                double rx = MathUtil.Hash01(seed + i * 17 + 1);
+                double ry = MathUtil.Hash01(seed + i * 17 + 2);
+                double rd = MathUtil.Hash01(seed + i * 17 + 3);
+
+                _starPts[i] = new StarPt
+                {
+                    WX = (rx * 2.0 - 1.0) * StarSpan,
+                    WY = (ry * 2.0 - 1.0) * StarSpan,
+                    Depth = rd
+                };
+            }
+        }
+
+        private void EnsureDebris()
+        {
+            if (_sys == null)
+                return;
+
+            int seed = _sys.Seed ^ 0x1F3D5B79;
+            if (_debrisSeedBuilt == seed && _debris.Length == DebrisCount)
+                return;
+
+            _debrisSeedBuilt = seed;
+            _debris = new DebrisPt[DebrisCount];
+
+            for (int i = 0; i < DebrisCount; i++)
+            {
+                double rx = HashNoise.Hash01(seed + i * 31, 1, 2);
+                double ry = HashNoise.Hash01(seed + i * 31, 3, 4);
+                double rvx = HashNoise.Hash01(seed + i * 31, 5, 6);
+                double rvy = HashNoise.Hash01(seed + i * 31, 7, 8);
+                double rd = HashNoise.Hash01(seed + i * 31, 9, 10);
+
+                double wx = (rx * 2.0 - 1.0) * DebrisSpan;
+                double wy = (ry * 2.0 - 1.0) * DebrisSpan;
+                double vx = (rvx * 2.0 - 1.0) * DebrisMaxV;
+                double vy = (rvy * 2.0 - 1.0) * DebrisMaxV;
+
+                _debris[i] = new DebrisPt
+                {
+                    WX = wx,
+                    WY = wy,
+                    VX = vx,
+                    VY = vy,
+                    Depth = rd
+                };
+            }
+        }
+
+        private void UpdateDebris(double dt)
+        {
+            if (!_showDebris)
+                return;
+
+            EnsureDebris();
+
+            for (int i = 0; i < _debris.Length; i++)
+            {
+                DebrisPt d = _debris[i];
+                d.WX += d.VX * dt;
+                d.WY += d.VY * dt;
+                d.WX = MathUtil.Wrap(d.WX, -DebrisSpan, DebrisSpan);
+                d.WY = MathUtil.Wrap(d.WY, -DebrisSpan, DebrisSpan);
+                _debris[i] = d;
+            }
+        }
+
+        private void SetActiveSystem(int index, bool resetSimTime)
+        {
+            if (_galaxy.Systems.Count == 0)
+                return;
+
+            _systemIndex = MathUtil.ClampInt(index, 0, _galaxy.Systems.Count - 1);
+            _sys = _galaxy.Get(_systemIndex);
+            if (resetSimTime)
+                _simTime = 0.0;
+
+            _camWX = 0.0;
+            _camWY = 0.0;
+            _targetCamWX = 0.0;
+            _targetCamWY = 0.0;
+
+            _starSeedBuilt = int.MinValue;
+            _debrisSeedBuilt = int.MinValue;
+
+            if (_sys != null)
+            {
+                StarSystemLogic.UpdateCelestials(_sys, _simTime, _useKepler);
+                RebuildSelection();
+                _events.Add(_simTime, $"Entered system: {_sys.Name}");
+            }
+        }
+
         private void FitSystemToView(PixelEngineContext ctx)
         {
             if (_sys == null)
                 return;
 
-            double maxA = GetMaxA();
-
-            double size = Math.Min(ctx.Width, ctx.Height);
-            double zoom = Math.Max(2.0, size * 0.45 / maxA);
-            _camera.Zoom = MathUtil.Clamp(zoom, 2.0, 200.0);
-            _camera.TargetZoom = _camera.Zoom;
-        }
-
-        private double GetMaxA()
-        {
-            if (_sys == null)
-                return 10.0;
-
             double maxA = 10.0;
             for (int i = 0; i < _sys.Planets.Count; i++)
                 if (_sys.Planets[i].A > maxA) maxA = _sys.Planets[i].A;
 
-            return maxA;
+            double size = Math.Min(ctx.Width, ctx.Height);
+            double zoom = Math.Max(2.0, size * 0.45 / maxA);
+            _worldToScreen = MathUtil.Clamp(zoom, 2.0, 200.0);
+            _targetWorldToScreen = _worldToScreen;
+        }
+
+        private void SnapCamera(double wx, double wy, double zoom, double orbitScale)
+        {
+            _camWX = _targetCamWX = wx;
+            _camWY = _targetCamWY = wy;
+            _worldToScreen = _targetWorldToScreen = zoom;
+            _orbitYScale = _targetOrbitYScale = orbitScale;
+        }
+
+        private void RebuildSelection()
+        {
+            _selection.Clear();
+
+            _selection.Add(new SelectionItem
+            {
+                Kind = SelectionKind.Sun,
+                Index = -1,
+                SubIndex = -1,
+                Label = "Sun",
+                WX = 0.0,
+                WY = 0.0,
+                WZ = 0.0
+            });
+
+            if (_sys == null)
+                return;
+
+            for (int i = 0; i < _sys.Planets.Count; i++)
+            {
+                Planet planet = _sys.Planets[i];
+                _selection.Add(new SelectionItem
+                {
+                    Kind = SelectionKind.Planet,
+                    Index = i,
+                    SubIndex = -1,
+                    Label = planet.Name,
+                    WX = planet.WX,
+                    WY = planet.WY,
+                    WZ = planet.WZ
+                });
+
+                for (int m = 0; m < planet.Moons.Count; m++)
+                {
+                    Moon moon = planet.Moons[m];
+                    _selection.Add(new SelectionItem
+                    {
+                        Kind = SelectionKind.Moon,
+                        Index = i,
+                        SubIndex = m,
+                        Label = moon.Name,
+                        WX = moon.WX,
+                        WY = moon.WY,
+                        WZ = moon.WZ
+                    });
+                }
+            }
+
+            for (int i = 0; i < _sys.Stations.Count; i++)
+            {
+                Station station = _sys.Stations[i];
+                _selection.Add(new SelectionItem
+                {
+                    Kind = SelectionKind.Station,
+                    Index = i,
+                    SubIndex = -1,
+                    Label = station.Name,
+                    WX = station.WX,
+                    WY = station.WY,
+                    WZ = station.WZ
+                });
+            }
+
+            for (int i = 0; i < _sys.Ships.Count; i++)
+            {
+                Ship ship = _sys.Ships[i];
+                _selection.Add(new SelectionItem
+                {
+                    Kind = SelectionKind.Ship,
+                    Index = i,
+                    SubIndex = -1,
+                    Label = ship.Name,
+                    WX = ship.WX,
+                    WY = ship.WY,
+                    WZ = ship.WZ
+                });
+            }
+
+            for (int i = 0; i < _sys.Asteroids.Count; i++)
+            {
+                Asteroid asteroid = _sys.Asteroids[i];
+                _selection.Add(new SelectionItem
+                {
+                    Kind = SelectionKind.Asteroid,
+                    Index = i,
+                    SubIndex = -1,
+                    Label = $"Asteroid-{i + 1}",
+                    WX = asteroid.WX,
+                    WY = asteroid.WY,
+                    WZ = asteroid.WZ
+                });
+            }
+
+            for (int i = 0; i < _sys.Nebulae.Count; i++)
+            {
+                NebulaCloud cloud = _sys.Nebulae[i];
+                _selection.Add(new SelectionItem
+                {
+                    Kind = SelectionKind.Nebula,
+                    Index = i,
+                    SubIndex = -1,
+                    Label = $"Nebula-{i + 1}",
+                    WX = cloud.WX,
+                    WY = cloud.WY,
+                    WZ = cloud.WZ
+                });
+            }
+
+            _selIndex = MathUtil.ClampInt(_selIndex, 0, Math.Max(0, _selection.Count - 1));
+        }
+
+        private SelectionItem? GetSelection()
+        {
+            if (_selection.Count == 0)
+                RebuildSelection();
+            if (_selection.Count == 0)
+                return null;
+
+            _selIndex = MathUtil.ClampInt(_selIndex, 0, _selection.Count - 1);
+            SelectionItem item = _selection[_selIndex];
+
+            if (_sys == null)
+                return item;
+
+            switch (item.Kind)
+            {
+                case SelectionKind.Sun:
+                    item.WX = 0;
+                    item.WY = 0;
+                    item.WZ = 0;
+                    break;
+                case SelectionKind.Planet:
+                    if ((uint)item.Index < (uint)_sys.Planets.Count)
+                    {
+                        Planet p = _sys.Planets[item.Index];
+                        item.WX = p.WX;
+                        item.WY = p.WY;
+                        item.WZ = p.WZ;
+                    }
+                    break;
+                case SelectionKind.Moon:
+                    if ((uint)item.Index < (uint)_sys.Planets.Count)
+                    {
+                        Planet planet = _sys.Planets[item.Index];
+                        if ((uint)item.SubIndex < (uint)planet.Moons.Count)
+                        {
+                            Moon moon = planet.Moons[item.SubIndex];
+                            item.WX = moon.WX;
+                            item.WY = moon.WY;
+                            item.WZ = moon.WZ;
+                        }
+                    }
+                    break;
+                case SelectionKind.Station:
+                    if ((uint)item.Index < (uint)_sys.Stations.Count)
+                    {
+                        Station s = _sys.Stations[item.Index];
+                        item.WX = s.WX;
+                        item.WY = s.WY;
+                        item.WZ = s.WZ;
+                    }
+                    break;
+                case SelectionKind.Ship:
+                    if ((uint)item.Index < (uint)_sys.Ships.Count)
+                    {
+                        Ship sh = _sys.Ships[item.Index];
+                        item.WX = sh.WX;
+                        item.WY = sh.WY;
+                        item.WZ = sh.WZ;
+                    }
+                    break;
+                case SelectionKind.Asteroid:
+                    if ((uint)item.Index < (uint)_sys.Asteroids.Count)
+                    {
+                        Asteroid a = _sys.Asteroids[item.Index];
+                        item.WX = a.WX;
+                        item.WY = a.WY;
+                        item.WZ = a.WZ;
+                    }
+                    break;
+                case SelectionKind.Nebula:
+                    if ((uint)item.Index < (uint)_sys.Nebulae.Count)
+                    {
+                        NebulaCloud n = _sys.Nebulae[item.Index];
+                        item.WX = n.WX;
+                        item.WY = n.WY;
+                        item.WZ = n.WZ;
+                    }
+                    break;
+            }
+
+            _selection[_selIndex] = item;
+            return item;
+        }
+
+        private void CycleSelection(int dir)
+        {
+            if (_selection.Count == 0)
+                RebuildSelection();
+
+            if (_selection.Count == 0)
+                return;
+
+            _selIndex = MathUtil.WrapIndex(_selIndex + dir, _selection.Count);
+        }
+
+        private bool IsBlackHoleSystem(StarSystem sys, int systemIndex)
+        {
+            if (systemIndex == _forcedBlackHoleSystemIndex)
+                return true;
+
+            if (sys.Kind == SystemKind.BlackHole)
+                return true;
+
+            double r01 = HashNoise.Hash01(sys.Seed ^ 0x6A09E667, 123, 456);
+            return r01 < BlackHoleChanceFallback;
+        }
+
+        private int WorldToScreenX(double wx)
+            => _centerX + (int)Math.Round((wx - _camWX) * _worldToScreen);
+
+        private int WorldToScreenY(double wy)
+            => _centerY + (int)Math.Round((wy - _camWY) * _worldToScreen * _orbitYScale);
+
+        private static void ComputeOrbitPoint(int systemSeed, Planet planet, double meanAnomaly, out double wx, out double wy)
+        {
+            OrbitMath.Kepler2D(planet.A, MathUtil.Clamp(planet.E, 0.0, 0.95), 0.0, meanAnomaly, out double x, out double y);
+
+            int pSeed = systemSeed ^ planet.Name.GetHashCode();
+            double plane = (HashNoise.Hash01(pSeed, 101, 202) * 2.0 - 1.0) * 1.05;
+
+            double c = Math.Cos(plane);
+            double s = Math.Sin(plane);
+            double rx = x * c - y * s;
+            double ry = x * s + y * c;
+
+            double inc = 0.55 + 0.45 * HashNoise.Hash01(pSeed, 303, 404);
+            ry *= inc;
+
+            double co = Math.Cos(planet.Omega);
+            double so = Math.Sin(planet.Omega);
+            wx = rx * co - ry * so;
+            wy = rx * so + ry * co;
+        }
+
+        private static double Lerp(double a, double b, double t)
+            => a + (b - a) * t;
+
+        private void DrawText(PixelRenderer renderer, int x, int y, string text, Color color)
+        {
+            _font.DrawText(renderer, x, y, text, color);
+        }
+
+        private sealed class PixelFont
+        {
+            private readonly Dictionary<char, byte[]> _glyphs = new Dictionary<char, byte[]>();
+            public int Width { get; } = 5;
+            public int Height { get; } = 7;
+
+            public PixelFont()
+            {
+                Add('A', "01110", "10001", "10001", "11111", "10001", "10001", "10001");
+                Add('B', "11110", "10001", "10001", "11110", "10001", "10001", "11110");
+                Add('C', "01110", "10001", "10000", "10000", "10000", "10001", "01110");
+                Add('D', "11110", "10001", "10001", "10001", "10001", "10001", "11110");
+                Add('E', "11111", "10000", "10000", "11110", "10000", "10000", "11111");
+                Add('F', "11111", "10000", "10000", "11110", "10000", "10000", "10000");
+                Add('G', "01110", "10001", "10000", "10111", "10001", "10001", "01110");
+                Add('H', "10001", "10001", "10001", "11111", "10001", "10001", "10001");
+                Add('I', "11111", "00100", "00100", "00100", "00100", "00100", "11111");
+                Add('J', "11111", "00010", "00010", "00010", "00010", "10010", "01100");
+                Add('K', "10001", "10010", "10100", "11000", "10100", "10010", "10001");
+                Add('L', "10000", "10000", "10000", "10000", "10000", "10000", "11111");
+                Add('M', "10001", "11011", "10101", "10101", "10001", "10001", "10001");
+                Add('N', "10001", "11001", "10101", "10011", "10001", "10001", "10001");
+                Add('O', "01110", "10001", "10001", "10001", "10001", "10001", "01110");
+                Add('P', "11110", "10001", "10001", "11110", "10000", "10000", "10000");
+                Add('Q', "01110", "10001", "10001", "10001", "10101", "10010", "01101");
+                Add('R', "11110", "10001", "10001", "11110", "10100", "10010", "10001");
+                Add('S', "01111", "10000", "10000", "01110", "00001", "00001", "11110");
+                Add('T', "11111", "00100", "00100", "00100", "00100", "00100", "00100");
+                Add('U', "10001", "10001", "10001", "10001", "10001", "10001", "01110");
+                Add('V', "10001", "10001", "10001", "10001", "10001", "01010", "00100");
+                Add('W', "10001", "10001", "10001", "10101", "10101", "10101", "01010");
+                Add('X', "10001", "10001", "01010", "00100", "01010", "10001", "10001");
+                Add('Y', "10001", "10001", "01010", "00100", "00100", "00100", "00100");
+                Add('Z', "11111", "00001", "00010", "00100", "01000", "10000", "11111");
+
+                Add('0', "01110", "10001", "10011", "10101", "11001", "10001", "01110");
+                Add('1', "00100", "01100", "00100", "00100", "00100", "00100", "01110");
+                Add('2', "01110", "10001", "00001", "00010", "00100", "01000", "11111");
+                Add('3', "11110", "00001", "00001", "01110", "00001", "00001", "11110");
+                Add('4', "00010", "00110", "01010", "10010", "11111", "00010", "00010");
+                Add('5', "11111", "10000", "10000", "11110", "00001", "00001", "11110");
+                Add('6', "01110", "10000", "10000", "11110", "10001", "10001", "01110");
+                Add('7', "11111", "00001", "00010", "00100", "01000", "01000", "01000");
+                Add('8', "01110", "10001", "10001", "01110", "10001", "10001", "01110");
+                Add('9', "01110", "10001", "10001", "01111", "00001", "00001", "01110");
+
+                Add('-', "00000", "00000", "00000", "11111", "00000", "00000", "00000");
+                Add('.', "00000", "00000", "00000", "00000", "00000", "00110", "00110");
+                Add(':', "00000", "00110", "00110", "00000", "00110", "00110", "00000");
+                Add('/', "00001", "00010", "00100", "01000", "10000", "00000", "00000");
+                Add(',', "00000", "00000", "00000", "00000", "00000", "00110", "00100");
+                Add('[', "01110", "01000", "01000", "01000", "01000", "01000", "01110");
+                Add(']', "01110", "00010", "00010", "00010", "00010", "00010", "01110");
+                Add('(', "00010", "00100", "01000", "01000", "01000", "00100", "00010");
+                Add(')', "01000", "00100", "00010", "00010", "00010", "00100", "01000");
+                Add('+', "00000", "00100", "00100", "11111", "00100", "00100", "00000");
+                Add('=', "00000", "11111", "00000", "11111", "00000", "00000", "00000");
+                Add(' ', "00000", "00000", "00000", "00000", "00000", "00000", "00000");
+            }
+
+            public void DrawText(PixelRenderer renderer, int x, int y, string text, Color color)
+            {
+                if (renderer == null || string.IsNullOrEmpty(text))
+                    return;
+
+                int cursorX = x;
+                int cursorY = y;
+
+                for (int i = 0; i < text.Length; i++)
+                {
+                    char c = char.ToUpperInvariant(text[i]);
+                    if (c == '\n')
+                    {
+                        cursorX = x;
+                        cursorY += Height + 2;
+                        continue;
+                    }
+
+                    if (!_glyphs.TryGetValue(c, out byte[]? rows))
+                        rows = _glyphs[' '];
+
+                    for (int row = 0; row < Height; row++)
+                    {
+                        byte bits = rows[row];
+                        for (int col = 0; col < Width; col++)
+                        {
+                            if ((bits & (1 << (Width - 1 - col))) != 0)
+                                renderer.SetPixel(cursorX + col, cursorY + row, color);
+                        }
+                    }
+
+                    cursorX += Width + 1;
+                }
+            }
+
+            private void Add(char c, params string[] rows)
+            {
+                byte[] data = new byte[Height];
+                for (int i = 0; i < Height; i++)
+                {
+                    string row = rows[i];
+                    byte mask = 0;
+                    for (int j = 0; j < Width; j++)
+                    {
+                        if (row[j] == '1')
+                            mask |= (byte)(1 << (Width - 1 - j));
+                    }
+                    data[i] = mask;
+                }
+                _glyphs[c] = data;
+            }
         }
     }
 }
