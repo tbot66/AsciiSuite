@@ -55,25 +55,25 @@ namespace AsciiEngine
 
             unsafe
             {
-                stbtt_fontinfo font;
+                StbTrueType.stbtt_fontinfo font = new StbTrueType.stbtt_fontinfo();
                 fixed (byte* fontPtr = fontData)
                 {
-                    if (StbTrueType.stbtt_InitFont(&font, fontPtr, 0) == 0)
+                    if (StbTrueType.stbtt_InitFont(font, fontPtr, 0) == 0)
                         throw new InvalidOperationException("Failed to initialize font data.");
 
-                    float scale = StbTrueType.stbtt_ScaleForPixelHeight(&font, pixelHeight);
+                    float scale = StbTrueType.stbtt_ScaleForPixelHeight(font, pixelHeight);
 
                     int ascent;
                     int descent;
                     int lineGap;
-                    StbTrueType.stbtt_GetFontVMetrics(&font, &ascent, &descent, &lineGap);
+                    StbTrueType.stbtt_GetFontVMetrics(font, &ascent, &descent, &lineGap);
 
                     int baseline = (int)MathF.Ceiling(ascent * scale);
                     int lineHeight = (int)MathF.Ceiling((ascent - descent + lineGap) * scale);
 
                     int advance;
                     int lsb;
-                    StbTrueType.stbtt_GetCodepointHMetrics(&font, (int)'M', &advance, &lsb);
+                    StbTrueType.stbtt_GetCodepointHMetrics(font, (int)'M', &advance, &lsb);
 
                     int cellWidth = (int)MathF.Ceiling(advance * scale) + padding * 2;
                     int cellHeight = lineHeight + padding * 2;
@@ -101,7 +101,7 @@ namespace AsciiEngine
                         int h;
                         int xoff;
                         int yoff;
-                        byte* bitmap = StbTrueType.stbtt_GetCodepointBitmap(&font, 0, scale, c, &w, &h, &xoff, &yoff);
+                        byte* bitmap = StbTrueType.stbtt_GetCodepointBitmap(font, 0, scale, c, &w, &h, &xoff, &yoff);
 
                         int xStart = cellX + padding + xoff;
                         int yStart = cellY + padding + baseline + yoff;

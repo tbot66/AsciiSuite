@@ -1,8 +1,7 @@
 namespace AsciiEngine
 {
-    public interface IFramePresenter
+    public interface IFramePresenter : IDisposable
     {
         void Present(ConsoleRenderer src);
-        void Dispose();
     }
 }
