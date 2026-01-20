@@ -6,4 +6,11 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
+  <ItemGroup>
+    <PackageReference Include="OpenTK.Graphics" Version="4.9.4" />
+    <PackageReference Include="ppy.SDL2-CS" Version="1.0.82" />
+    <PackageReference Include="StbImageSharp" Version="2.30.15" />
+    <PackageReference Include="StbTrueTypeSharp" Version="1.26.12" />
+  </ItemGroup>
+
 </Project>
