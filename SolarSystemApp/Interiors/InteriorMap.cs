@@ -11,12 +11,10 @@ namespace SolarSystemApp.Interiors
 
         private readonly char[] _tiles; // row-major
 
-        // Canonical tiles used by prefab stamping:
-        public const char VOID = '#';   // outside ship (blocked)
-        public const char WALL = 'X';   // ship wall (blocked)
-        public const char FLOOR = '.';  // walkable floor
-        public const char DOOR = 'D';   // walkable door
-        public const char WINDOW = 'W'; // window wall (blocked)
+        // Canonical tiles used by ship models:
+        public const char VOID = '\0'; // outside ship (blocked)
+        public const char WALL = '█';  // ship wall (blocked)
+        public const char FLOOR = ' '; // walkable empty interior
 
         public InteriorMap(int w, int h, char fill = VOID)
         {
@@ -40,14 +38,12 @@ namespace SolarSystemApp.Interiors
             _tiles[y * W + x] = ch;
         }
 
-        // Only true walkable tiles:
-        // - floor '.' and door 'D' and any props you place later
-        // Blocked: VOID '#', WALL 'X', WINDOW 'W'
+        // Walkable tiles: anything that is not VOID or a wall.
         public bool IsWalkable(int x, int y)
         {
             if (!InBounds(x, y)) return false;
             char t = Get(x, y);
-            return t != VOID && t != WALL && t != WINDOW;
+            return t != VOID && t != WALL;
         }
 
         // Optional debug helper if you want to print in a stable way (not required by your engine).
@@ -68,8 +64,7 @@ namespace SolarSystemApp.Interiors
             return sb.ToString();
         }
 
-        // Minimal styling: walls are █, floors are space, void is space (outside ship), doors are ▣, windows are ░.
-        // Keeps signature compatible with your existing renderer.
+        // Ship model styling: walls are █, walkable glyphs show as-is, outside is empty.
         public void GetStyledTile(int x, int y, bool isPlayer, out char glyph, out AnsiColor fg, out AnsiColor bg)
         {
             bg = AnsiColor.Black;
@@ -90,39 +85,22 @@ namespace SolarSystemApp.Interiors
 
             char t = Get(x, y);
 
-            switch (t)
+            if (t == VOID)
             {
-                case VOID:
-                    glyph = ' '; // outside ship: empty
-                    fg = AnsiColor.Black;
-                    break;
-
-                case FLOOR:
-                    glyph = ' '; // interior space: empty
-                    fg = AnsiColor.White;
-                    break;
-
-                case WALL:
-                    glyph = '█';
-                    fg = AnsiColor.BrightBlack;
-                    break;
-
-                case WINDOW:
-                    glyph = '░';
-                    fg = AnsiColor.BrightBlue;
-                    break;
-
-                case DOOR:
-                    glyph = '▣';
-                    fg = AnsiColor.BrightCyan;
-                    break;
-
-                default:
-                    // Any future props you stamp: show as-is
-                    glyph = t;
-                    fg = AnsiColor.BrightWhite;
-                    break;
+                glyph = ' ';
+                fg = AnsiColor.Black;
+                return;
             }
+
+            if (t == WALL)
+            {
+                glyph = '█';
+                fg = AnsiColor.BrightBlack;
+                return;
+            }
+
+            glyph = t;
+            fg = AnsiColor.White;
         }
     }
 }
