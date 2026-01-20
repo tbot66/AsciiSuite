@@ -65,6 +65,52 @@ namespace AsciiEngine
             }
         }
 
+        // Windowed: presenter drives output; renderer buffers resize only when caller requests.
+        public static void Run(IAsciiApp app, int fpsCap, IFramePresenter presenter)
+        {
+            if (app == null) throw new ArgumentNullException(nameof(app));
+            if (presenter == null) throw new ArgumentNullException(nameof(presenter));
+
+            bool capFps = fpsCap > 0;
+            if (fpsCap < 0) fpsCap = 0;
+
+            TerminalSession term = new TerminalSession();
+            try
+            {
+                (int w, int h) = GetInitialSize();
+                ConsoleRenderer renderer = CreateRenderer(w, h);
+                InputState input = new InputState();
+
+                EngineContext ctx = new EngineContext(term, renderer, input);
+                app.Init(ctx);
+
+                while (!term.ExitRequested)
+                {
+                    double dt;
+                    int unusedW;
+                    int unusedH;
+                    term.BeginFrame(out dt, out unusedW, out unusedH);
+                    ctx.DeltaTime = dt;
+                    ctx.Time += dt;
+
+                    term.PollInput(input);
+
+                    app.Update(ctx);
+                    app.Draw(ctx);
+
+                    presenter.Present(ctx.Renderer);
+
+                    if (capFps)
+                        term.SleepToMaintainFps(fpsCap);
+                }
+            }
+            finally
+            {
+                presenter.Dispose();
+                term.Dispose();
+            }
+        }
+
         private static (int w, int h) GetInitialSize()
         {
             int ww;
