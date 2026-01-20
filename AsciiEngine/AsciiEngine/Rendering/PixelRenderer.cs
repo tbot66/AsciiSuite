@@ -83,6 +83,19 @@ namespace AsciiEngine
             }
         }
 
+        public void DrawRect(int x, int y, int w, int h, Color color)
+        {
+            if (w <= 0 || h <= 0) return;
+
+            int x1 = x + w - 1;
+            int y1 = y + h - 1;
+
+            DrawLine(x, y, x1, y, color);
+            DrawLine(x, y, x, y1, color);
+            DrawLine(x1, y, x1, y1, color);
+            DrawLine(x, y1, x1, y1, color);
+        }
+
         public void DrawLine(int x0, int y0, int x1, int y1, Color color)
         {
             int dx = Math.Abs(x1 - x0);
@@ -98,6 +111,54 @@ namespace AsciiEngine
                 int e2 = 2 * err;
                 if (e2 >= dy) { err += dy; x0 += sx; }
                 if (e2 <= dx) { err += dx; y0 += sy; }
+            }
+        }
+
+        public void DrawCircle(int cx, int cy, int r, Color color)
+        {
+            if (r <= 0) return;
+
+            int x = r;
+            int y = 0;
+            int err = 0;
+
+            while (x >= y)
+            {
+                SetPixel(cx + x, cy + y, color);
+                SetPixel(cx + y, cy + x, color);
+                SetPixel(cx - y, cy + x, color);
+                SetPixel(cx - x, cy + y, color);
+                SetPixel(cx - x, cy - y, color);
+                SetPixel(cx - y, cy - x, color);
+                SetPixel(cx + y, cy - x, color);
+                SetPixel(cx + x, cy - y, color);
+
+                y++;
+                if (err <= 0)
+                {
+                    err += 2 * y + 1;
+                }
+                else
+                {
+                    x--;
+                    err += 2 * (y - x) + 1;
+                }
+            }
+        }
+
+        public void FillCircle(int cx, int cy, int r, Color color)
+        {
+            if (r <= 0) return;
+
+            int rr = r * r;
+            for (int y = -r; y <= r; y++)
+            {
+                int yy = y * y;
+                int span = (int)Math.Sqrt(Math.Max(0, rr - yy));
+                for (int x = -span; x <= span; x++)
+                {
+                    SetPixel(cx + x, cy + y, color);
+                }
             }
         }
     }
