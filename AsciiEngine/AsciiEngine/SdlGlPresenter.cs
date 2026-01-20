@@ -6,7 +6,7 @@ using SDL2;
 
 namespace AsciiEngine
 {
-    public sealed class SdlGlPresenter : IFramePresenter, IInputSource
+    public sealed class SdlGlPresenter : IFramePresenter
     {
         private const int FloatsPerBgVertex = 5;
         private const int FloatsPerGlyphVertex = 7;
@@ -56,83 +56,20 @@ namespace AsciiEngine
             if (_quitRequested)
                 return;
 
-            SDL.SDL_GL_GetDrawableSize(_window, out int drawableW, out int drawableH);
-            if (drawableW <= 0 || drawableH <= 0)
+            PumpEvents();
+
+            SDL.SDL_GetWindowSize(_window, out int windowW, out int windowH);
+            if (windowW <= 0 || windowH <= 0)
                 return;
 
-            GL.Viewport(0, 0, drawableW, drawableH);
+            GL.Viewport(0, 0, windowW, windowH);
             GL.ClearColor(0f, 0f, 0f, 1f);
             GL.Clear(ClearBufferMask.ColorBufferBit);
 
-            GetRenderMetrics(src, drawableW, drawableH, out float originX, out float originY, out float cellW, out float cellH);
-
-            RenderBackground(src, drawableW, drawableH, originX, originY, cellW, cellH);
-            RenderGlyphs(src, drawableW, drawableH, originX, originY, cellW, cellH);
+            RenderBackground(src, windowW, windowH);
+            RenderGlyphs(src, windowW, windowH);
 
             SDL.SDL_GL_SwapWindow(_window);
-        }
-
-        public void PumpEvents(InputState input)
-        {
-            if (_disposed) throw new ObjectDisposedException(nameof(SdlGlPresenter));
-            if (input == null) throw new ArgumentNullException(nameof(input));
-
-            while (SDL.SDL_PollEvent(out SDL.SDL_Event e) == 1)
-            {
-                switch (e.type)
-                {
-                    case SDL.SDL_EventType.SDL_QUIT:
-                        _quitRequested = true;
-                        input.RequestQuit();
-                        break;
-                    case SDL.SDL_EventType.SDL_KEYDOWN:
-                        HandleKeyDown(input, e.key);
-                        break;
-                    case SDL.SDL_EventType.SDL_KEYUP:
-                        HandleKeyUp(input, e.key);
-                        break;
-                    case SDL.SDL_EventType.SDL_MOUSEMOTION:
-                        input.OnMouseMove(e.motion.x, e.motion.y, e.motion.xrel, e.motion.yrel);
-                        break;
-                    case SDL.SDL_EventType.SDL_MOUSEBUTTONDOWN:
-                        if (TryMapMouseButton(e.button.button, out MouseButton downButton))
-                            input.OnMouseButtonDown(downButton);
-                        break;
-                    case SDL.SDL_EventType.SDL_MOUSEBUTTONUP:
-                        if (TryMapMouseButton(e.button.button, out MouseButton upButton))
-                            input.OnMouseButtonUp(upButton);
-                        break;
-                }
-            }
-        }
-
-        private void HandleKeyDown(InputState input, SDL.SDL_KeyboardEvent keyEvent)
-        {
-            UpdateModifiers(input, keyEvent.keysym.mod);
-            if (TryMapKey(keyEvent.keysym.sym, out ConsoleKey key))
-            {
-                input.OnKeyDown(key);
-                if (key == ConsoleKey.Escape)
-                {
-                    _quitRequested = true;
-                    input.RequestQuit();
-                }
-            }
-        }
-
-        private static void HandleKeyUp(InputState input, SDL.SDL_KeyboardEvent keyEvent)
-        {
-            UpdateModifiers(input, keyEvent.keysym.mod);
-            if (TryMapKey(keyEvent.keysym.sym, out ConsoleKey key))
-                input.OnKeyUp(key);
-        }
-
-        private static void UpdateModifiers(InputState input, SDL.SDL_Keymod mod)
-        {
-            bool shift = (mod & SDL.SDL_Keymod.KMOD_SHIFT) != 0;
-            bool alt = (mod & SDL.SDL_Keymod.KMOD_ALT) != 0;
-            bool control = (mod & SDL.SDL_Keymod.KMOD_CTRL) != 0;
-            input.SetModifiers(shift, alt, control);
         }
 
         private void Initialize(ConsoleRenderer src)
@@ -154,7 +91,7 @@ namespace AsciiEngine
                 SDL.SDL_WINDOWPOS_CENTERED,
                 initialW,
                 initialH,
-                SDL.SDL_WindowFlags.SDL_WINDOW_OPENGL | SDL.SDL_WindowFlags.SDL_WINDOW_RESIZABLE | SDL.SDL_WindowFlags.SDL_WINDOW_ALLOW_HIGHDPI);
+                SDL.SDL_WindowFlags.SDL_WINDOW_OPENGL | SDL.SDL_WindowFlags.SDL_WINDOW_RESIZABLE);
 
             if (_window == IntPtr.Zero)
                 throw new InvalidOperationException($"SDL_CreateWindow failed: {SDL.SDL_GetError()}");
@@ -167,14 +104,10 @@ namespace AsciiEngine
             SDL.SDL_GL_SetSwapInterval(1);
             GL.LoadBindings(new SdlBindingsContext());
 
-            GL.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
-
             string resolvedFont = ResolveFontPath(_fontPath);
             _atlas = new GlyphAtlas(resolvedFont, _fontPixelHeight, _padding);
 
             SDL.SDL_SetWindowSize(_window, src.Width * _atlas.CellWidth, src.Height * _atlas.CellHeight);
-            SDL.SDL_GL_GetDrawableSize(_window, out int drawableW, out int drawableH);
-            GL.Viewport(0, 0, drawableW, drawableH);
 
             GL.Disable(EnableCap.DepthTest);
             GL.Enable(EnableCap.Blend);
@@ -213,25 +146,28 @@ namespace AsciiEngine
             _initialized = true;
         }
 
-        private void RenderBackground(ConsoleRenderer src, int windowW, int windowH, float originX, float originY, float cellW, float cellH)
+        private void RenderBackground(ConsoleRenderer src, int windowW, int windowH)
         {
             int cellCount = src.Width * src.Height;
             int requiredFloats = cellCount * 6 * FloatsPerBgVertex;
             EnsureCapacity(ref _bgVertices, requiredFloats);
+
+            float cellW = windowW / (float)src.Width;
+            float cellH = windowH / (float)src.Height;
 
             ReadOnlySpan<Color> bg = src.Background;
             int offset = 0;
 
             for (int y = 0; y < src.Height; y++)
             {
-                float y0 = originY + y * cellH;
+                float y0 = y * cellH;
                 float y1 = y0 + cellH;
                 int row = y * src.Width;
 
                 for (int x = 0; x < src.Width; x++)
                 {
                     int idx = row + x;
-                    float x0 = originX + x * cellW;
+                    float x0 = x * cellW;
                     float x1 = x0 + cellW;
 
                     (byte r, byte g, byte b) = ColorUtils.ToRgbBytes(bg[idx]);
@@ -251,7 +187,7 @@ namespace AsciiEngine
             GL.DrawArrays(PrimitiveType.Triangles, 0, vertexCount);
         }
 
-        private void RenderGlyphs(ConsoleRenderer src, int windowW, int windowH, float originX, float originY, float cellW, float cellH)
+        private void RenderGlyphs(ConsoleRenderer src, int windowW, int windowH)
         {
             if (_atlas == null)
                 return;
@@ -260,20 +196,23 @@ namespace AsciiEngine
             int requiredFloats = cellCount * 6 * FloatsPerGlyphVertex;
             EnsureCapacity(ref _glyphVertices, requiredFloats);
 
+            float cellW = windowW / (float)src.Width;
+            float cellH = windowH / (float)src.Height;
+
             ReadOnlySpan<char> chars = src.Chars;
             ReadOnlySpan<Color> fg = src.Foreground;
             int offset = 0;
 
             for (int y = 0; y < src.Height; y++)
             {
-                float y0 = originY + y * cellH;
+                float y0 = y * cellH;
                 float y1 = y0 + cellH;
                 int row = y * src.Width;
 
                 for (int x = 0; x < src.Width; x++)
                 {
                     int idx = row + x;
-                    float x0 = originX + x * cellW;
+                    float x0 = x * cellW;
                     float x1 = x0 + cellW;
 
                     (byte r, byte g, byte b) = ColorUtils.ToRgbBytes(fg[idx]);
@@ -297,24 +236,6 @@ namespace AsciiEngine
             GL.BindBuffer(BufferTarget.ArrayBuffer, _glyphVbo);
             GL.BufferData(BufferTarget.ArrayBuffer, offset * sizeof(float), _glyphVertices, BufferUsageHint.DynamicDraw);
             GL.DrawArrays(PrimitiveType.Triangles, 0, vertexCount);
-        }
-
-        private void GetRenderMetrics(ConsoleRenderer src, int windowW, int windowH, out float originX, out float originY, out float cellW, out float cellH)
-        {
-            float baseCellW = _atlas?.CellWidth ?? _fontPixelHeight;
-            float baseCellH = _atlas?.CellHeight ?? _fontPixelHeight;
-
-            float contentW = src.Width * baseCellW;
-            float contentH = src.Height * baseCellH;
-
-            float scale = MathF.Min(windowW / contentW, windowH / contentH);
-            float renderW = contentW * scale;
-            float renderH = contentH * scale;
-
-            originX = (windowW - renderW) * 0.5f;
-            originY = (windowH - renderH) * 0.5f;
-            cellW = renderW / src.Width;
-            cellH = renderH / src.Height;
         }
 
         private static void EnsureCapacity(ref float[] data, int required)
@@ -421,246 +342,12 @@ namespace AsciiEngine
             data[offset++] = bf;
         }
 
-        private static bool TryMapMouseButton(uint sdlButton, out MouseButton button)
+        private void PumpEvents()
         {
-            switch (sdlButton)
+            while (SDL.SDL_PollEvent(out SDL.SDL_Event e) == 1)
             {
-                case SDL.SDL_BUTTON_LEFT:
-                    button = MouseButton.Left;
-                    return true;
-                case SDL.SDL_BUTTON_MIDDLE:
-                    button = MouseButton.Middle;
-                    return true;
-                case SDL.SDL_BUTTON_RIGHT:
-                    button = MouseButton.Right;
-                    return true;
-                case SDL.SDL_BUTTON_X1:
-                    button = MouseButton.X1;
-                    return true;
-                case SDL.SDL_BUTTON_X2:
-                    button = MouseButton.X2;
-                    return true;
-                default:
-                    button = MouseButton.Left;
-                    return false;
-            }
-        }
-
-        private static bool TryMapKey(SDL.SDL_Keycode keycode, out ConsoleKey key)
-        {
-            switch (keycode)
-            {
-                case SDL.SDL_Keycode.SDLK_BACKSPACE:
-                    key = ConsoleKey.Backspace;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_TAB:
-                    key = ConsoleKey.Tab;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_RETURN:
-                    key = ConsoleKey.Enter;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_ESCAPE:
-                    key = ConsoleKey.Escape;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_SPACE:
-                    key = ConsoleKey.Spacebar;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_UP:
-                    key = ConsoleKey.UpArrow;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_DOWN:
-                    key = ConsoleKey.DownArrow;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_LEFT:
-                    key = ConsoleKey.LeftArrow;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_RIGHT:
-                    key = ConsoleKey.RightArrow;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_F1:
-                    key = ConsoleKey.F1;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_F2:
-                    key = ConsoleKey.F2;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_F3:
-                    key = ConsoleKey.F3;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_F4:
-                    key = ConsoleKey.F4;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_F5:
-                    key = ConsoleKey.F5;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_F6:
-                    key = ConsoleKey.F6;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_F7:
-                    key = ConsoleKey.F7;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_F8:
-                    key = ConsoleKey.F8;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_F9:
-                    key = ConsoleKey.F9;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_F10:
-                    key = ConsoleKey.F10;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_F11:
-                    key = ConsoleKey.F11;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_F12:
-                    key = ConsoleKey.F12;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_0:
-                    key = ConsoleKey.D0;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_1:
-                    key = ConsoleKey.D1;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_2:
-                    key = ConsoleKey.D2;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_3:
-                    key = ConsoleKey.D3;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_4:
-                    key = ConsoleKey.D4;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_5:
-                    key = ConsoleKey.D5;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_6:
-                    key = ConsoleKey.D6;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_7:
-                    key = ConsoleKey.D7;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_8:
-                    key = ConsoleKey.D8;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_9:
-                    key = ConsoleKey.D9;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_a:
-                    key = ConsoleKey.A;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_b:
-                    key = ConsoleKey.B;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_c:
-                    key = ConsoleKey.C;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_d:
-                    key = ConsoleKey.D;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_e:
-                    key = ConsoleKey.E;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_f:
-                    key = ConsoleKey.F;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_g:
-                    key = ConsoleKey.G;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_h:
-                    key = ConsoleKey.H;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_i:
-                    key = ConsoleKey.I;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_j:
-                    key = ConsoleKey.J;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_k:
-                    key = ConsoleKey.K;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_l:
-                    key = ConsoleKey.L;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_m:
-                    key = ConsoleKey.M;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_n:
-                    key = ConsoleKey.N;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_o:
-                    key = ConsoleKey.O;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_p:
-                    key = ConsoleKey.P;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_q:
-                    key = ConsoleKey.Q;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_r:
-                    key = ConsoleKey.R;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_s:
-                    key = ConsoleKey.S;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_t:
-                    key = ConsoleKey.T;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_u:
-                    key = ConsoleKey.U;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_v:
-                    key = ConsoleKey.V;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_w:
-                    key = ConsoleKey.W;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_x:
-                    key = ConsoleKey.X;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_y:
-                    key = ConsoleKey.Y;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_z:
-                    key = ConsoleKey.Z;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_EQUALS:
-                case SDL.SDL_Keycode.SDLK_PLUS:
-                    key = ConsoleKey.OemPlus;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_MINUS:
-                    key = ConsoleKey.OemMinus;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_KP_0:
-                    key = ConsoleKey.NumPad0;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_KP_1:
-                    key = ConsoleKey.NumPad1;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_KP_2:
-                    key = ConsoleKey.NumPad2;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_KP_3:
-                    key = ConsoleKey.NumPad3;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_KP_4:
-                    key = ConsoleKey.NumPad4;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_KP_5:
-                    key = ConsoleKey.NumPad5;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_KP_6:
-                    key = ConsoleKey.NumPad6;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_KP_7:
-                    key = ConsoleKey.NumPad7;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_KP_8:
-                    key = ConsoleKey.NumPad8;
-                    return true;
-                case SDL.SDL_Keycode.SDLK_KP_9:
-                    key = ConsoleKey.NumPad9;
-                    return true;
-                default:
-                    key = ConsoleKey.NoName;
-                    return false;
+                if (e.type == SDL.SDL_EventType.SDL_QUIT)
+                    _quitRequested = true;
             }
         }
 
@@ -809,7 +496,7 @@ void main()
     vec2 zeroToOne = aPos / uResolution;
     vec2 clip = zeroToOne * 2.0 - 1.0;
     gl_Position = vec4(clip.x, 1.0 - clip.y, 0.0, 1.0);
-    vUv = vec2(aUv.x, 1.0 - aUv.y);
+    vUv = aUv;
     vColor = aColor;
 }
 ";
