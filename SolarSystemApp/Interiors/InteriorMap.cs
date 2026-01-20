@@ -17,6 +17,12 @@ namespace SolarSystemApp.Interiors
         public const char FLOOR = ' '; // walkable empty interior
         public const char WALL2 = '|';
 
+        public enum InteractionKind
+        {
+            NavigationConsole,
+            Bed
+        }
+
         public InteriorMap(int w, int h, char fill = VOID)
         {
             W = Math.Max(4, w);
@@ -45,6 +51,23 @@ namespace SolarSystemApp.Interiors
             if (!InBounds(x, y)) return false;
             char t = Get(x, y);
             return t != WALL && t != WALL2;
+        }
+
+        public static bool TryGetInteractionKind(char glyph, out InteractionKind kind)
+        {
+            switch (glyph)
+            {
+                case '╦':
+                    kind = InteractionKind.NavigationConsole;
+                    return true;
+                case '▄':
+                case '▒':
+                    kind = InteractionKind.Bed;
+                    return true;
+                default:
+                    kind = default;
+                    return false;
+            }
         }
 
 
