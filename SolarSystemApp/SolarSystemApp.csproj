@@ -8,6 +8,7 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <PackageReference Include="OpenRA-SDL2-CS" Version="1.0.42" />
     <PackageReference Include="Spectre.Console" Version="0.54.0" />
   </ItemGroup>
 
