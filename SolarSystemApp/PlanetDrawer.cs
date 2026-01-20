@@ -58,6 +58,27 @@ namespace SolarSystemApp.World
             return z;
         }
 
+        internal static double SpinTurns(double simTime, double spinSpeed)
+        {
+            return (simTime * spinSpeed) / (Math.PI * 2.0);
+        }
+
+        private static double MoonSpinTurns(double simTime, Moon moon, int seed)
+        {
+            if (Math.Abs(moon.SpinSpeed) > 1e-6)
+                return SpinTurns(simTime, moon.SpinSpeed);
+
+            double period = Math.Max(0.001, moon.LocalPeriod);
+            if (period <= 0.0001)
+            {
+                double fallback = 0.6 + 1.4 * HashNoise.Hash01(seed, 73, 91);
+                return SpinTurns(simTime, fallback);
+            }
+
+            double ang = moon.LocalPhase + (simTime * (Math.PI * 2.0) / period);
+            return ang / (Math.PI * 2.0);
+        }
+
         private static Color BlendRgb(Color a, Color b, double t)
         {
             t = MathUtil.Clamp(t, 0.0, 1.0);
@@ -146,7 +167,7 @@ namespace SolarSystemApp.World
             if (useVariantPalette)
                 pal = PlanetTextures.PickPaletteVariant(pSeed, p.Texture);
 
-            double spinTurns = (t * p.SpinSpeed) / (Math.PI * 2.0);
+            double spinTurns = SpinTurns(t, p.SpinSpeed);
             double tilt = p.AxisTilt;
 
             int stepSize = 1;
@@ -303,7 +324,7 @@ namespace SolarSystemApp.World
             int mSeed = seed ^ (m.Name?.GetHashCode() ?? 0);
             int ditherOx = mSeed & 3;
             int ditherOy = (mSeed >> 2) & 3;
-            double spinTurns = (t * m.SpinSpeed) / (Math.PI * 2.0);
+            double spinTurns = MoonSpinTurns(t, m, mSeed);
 
             int stepSize = 1;
 
