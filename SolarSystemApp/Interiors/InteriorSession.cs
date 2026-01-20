@@ -46,6 +46,10 @@ namespace SolarSystemApp.Interiors
 
         public InteractionMode CurrentInteractionMode { get; private set; } = InteractionMode.None;
 
+        public int SleepSelectedHours { get; private set; }
+        public double SleepRemainingHours { get; private set; }
+        public bool IsSleeping { get; private set; }
+
         public System.Collections.Generic.IReadOnlyList<InteractionOption> InteractionOptions => _interactionOptions;
 
         public bool HasActiveInteraction => _hasActiveInteraction;
@@ -122,6 +126,13 @@ namespace SolarSystemApp.Interiors
                 _ => InteractionMode.None
             };
 
+            if (CurrentInteractionMode == InteractionMode.SleepScreen)
+            {
+                SleepSelectedHours = 8;
+                SleepRemainingHours = 0;
+                IsSleeping = false;
+            }
+
             return CurrentInteractionMode != InteractionMode.None;
         }
 
@@ -129,7 +140,36 @@ namespace SolarSystemApp.Interiors
         {
             _hasActiveInteraction = false;
             _interactionOptions.Clear();
+            SleepRemainingHours = 0;
+            IsSleeping = false;
             CurrentInteractionMode = InteractionMode.None;
+        }
+
+        public void AdjustSleepSelection(int deltaHours)
+        {
+            int next = SleepSelectedHours + deltaHours;
+            SleepSelectedHours = Math.Max(0, Math.Min(24, next));
+        }
+
+        public void StartSleep()
+        {
+            SleepRemainingHours = SleepSelectedHours;
+            IsSleeping = SleepRemainingHours > 0;
+        }
+
+        public bool TickSleep(double deltaHours)
+        {
+            if (!IsSleeping) return false;
+
+            SleepRemainingHours -= deltaHours;
+            if (SleepRemainingHours <= 0)
+            {
+                SleepRemainingHours = 0;
+                IsSleeping = false;
+                return true;
+            }
+
+            return false;
         }
 
         public void UpdateCamera(int viewW, int viewH, int margin = 0)
