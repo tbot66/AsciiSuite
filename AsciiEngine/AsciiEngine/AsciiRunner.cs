@@ -22,8 +22,8 @@ namespace AsciiEngine
 
                 EngineContext ctx = new EngineContext(term, renderer, input);
 
-                Diagnostics.Log(AsciiCapabilities.DescribePresenter(\"ConsoleRenderer (ANSI)\", renderer.Width, renderer.Height));
-                Diagnostics.Log($\"[AsciiEngine] FrameBuffer: size={renderer.Width}x{renderer.Height}, bufferLen={renderer.BufferLength}.\");
+                Diagnostics.Log(AsciiCapabilities.DescribePresenter("ConsoleRenderer (ANSI)", renderer.Width, renderer.Height));
+                Diagnostics.Log($"[AsciiEngine] FrameBuffer: size={renderer.Width}x{renderer.Height}, bufferLen={renderer.BufferLength}.");
 
                 app.Init(ctx);
 
@@ -82,7 +82,7 @@ namespace AsciiEngine
 
                 EngineContext ctx = new EngineContext(term, renderer, input);
                 Diagnostics.Log(AsciiCapabilities.DescribePresenter(presenter.GetType().Name, renderer.Width, renderer.Height));
-                Diagnostics.Log($\"[AsciiEngine] FrameBuffer: size={renderer.Width}x{renderer.Height}, bufferLen={renderer.BufferLength}.\");
+                Diagnostics.Log($"[AsciiEngine] FrameBuffer: size={renderer.Width}x{renderer.Height}, bufferLen={renderer.BufferLength}.");
                 app.Init(ctx);
 
                 while (!term.ExitRequested)

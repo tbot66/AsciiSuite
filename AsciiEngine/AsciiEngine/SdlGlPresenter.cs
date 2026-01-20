@@ -58,7 +58,7 @@ namespace AsciiEngine
 
             PumpEvents();
 
-            SDL.SDL_GetWindowSize(_window, out int windowW, out int windowH);
+            SDL.SDL_GL_GetDrawableSize(_window, out int windowW, out int windowH);
             if (windowW <= 0 || windowH <= 0)
                 return;
 
@@ -466,7 +466,7 @@ void main()
 {
     vec2 zeroToOne = aPos / uResolution;
     vec2 clip = zeroToOne * 2.0 - 1.0;
-    gl_Position = vec4(clip.x, 1.0 - clip.y, 0.0, 1.0);
+    gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
     vColor = aColor;
 }
 ";
@@ -495,7 +495,7 @@ void main()
 {
     vec2 zeroToOne = aPos / uResolution;
     vec2 clip = zeroToOne * 2.0 - 1.0;
-    gl_Position = vec4(clip.x, 1.0 - clip.y, 0.0, 1.0);
+    gl_Position = vec4(clip.x, -clip.y, 0.0, 1.0);
     vUv = aUv;
     vColor = aColor;
 }
