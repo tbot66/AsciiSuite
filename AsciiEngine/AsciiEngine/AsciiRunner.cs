@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 
 namespace AsciiEngine
 {
@@ -32,7 +32,7 @@ namespace AsciiEngine
                 int newW = w;
                 int newH = h;
 
-                while (!term.ExitRequested)
+                while (!term.ExitRequested && !input.QuitRequested)
                 {
                     // Frame start: compute dt + resize detect
                     double dt;
@@ -40,8 +40,11 @@ namespace AsciiEngine
                     ctx.DeltaTime = dt;
                     ctx.Time += dt;
 
-                    // Input: update down/pressed/released
+                    input.BeginFrame();
                     term.PollInput(input);
+
+                    if (input.QuitRequested)
+                        break;
 
                     // Resize handling: recreate renderer buffers and re-init app (so it can relayout)
                     if (resized)
@@ -54,6 +57,8 @@ namespace AsciiEngine
                     app.Draw(ctx);
 
                     ctx.Renderer.Present();
+
+                    input.EndFrame();
 
                     if (capFps)
                         term.SleepToMaintainFps(fpsCap);
@@ -84,7 +89,9 @@ namespace AsciiEngine
                 EngineContext ctx = new EngineContext(term, renderer, input);
                 app.Init(ctx);
 
-                while (!term.ExitRequested)
+                IInputSource? inputSource = presenter as IInputSource;
+
+                while (!term.ExitRequested && !input.QuitRequested)
                 {
                     double dt;
                     int unusedW;
@@ -93,12 +100,22 @@ namespace AsciiEngine
                     ctx.DeltaTime = dt;
                     ctx.Time += dt;
 
-                    term.PollInput(input);
+                    input.BeginFrame();
+
+                    if (inputSource != null)
+                        inputSource.PumpEvents(input);
+                    else
+                        term.PollInput(input);
+
+                    if (input.QuitRequested)
+                        break;
 
                     app.Update(ctx);
                     app.Draw(ctx);
 
                     presenter.Present(ctx.Renderer);
+
+                    input.EndFrame();
 
                     if (capFps)
                         term.SleepToMaintainFps(fpsCap);
