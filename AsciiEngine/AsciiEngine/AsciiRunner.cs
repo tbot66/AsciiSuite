@@ -4,9 +4,6 @@ namespace AsciiEngine
 {
     public static class AsciiRunner
     {
-        private const int MinWidth = 1;
-        private const int MinHeight = 1;
-
         // fpsCap: set to 0 for uncapped (not recommended in console)
         public static void Run(IAsciiApp app, int fpsCap)
         {
@@ -25,7 +22,8 @@ namespace AsciiEngine
 
                 EngineContext ctx = new EngineContext(term, renderer, input);
 
-                Diagnostics.Log($"[AsciiEngine] Presenter: ConsoleRenderer (ANSI). Size={renderer.Width}x{renderer.Height}, bufferLen={renderer.BufferLength}.");
+                Diagnostics.Log(AsciiCapabilities.DescribePresenter(\"ConsoleRenderer (ANSI)\", renderer.Width, renderer.Height));
+                Diagnostics.Log($\"[AsciiEngine] FrameBuffer: size={renderer.Width}x{renderer.Height}, bufferLen={renderer.BufferLength}.\");
 
                 app.Init(ctx);
 
@@ -83,7 +81,8 @@ namespace AsciiEngine
                 InputState input = new InputState();
 
                 EngineContext ctx = new EngineContext(term, renderer, input);
-                Diagnostics.Log($"[AsciiEngine] Presenter: {presenter.GetType().Name}. Size={renderer.Width}x{renderer.Height}, bufferLen={renderer.BufferLength}.");
+                Diagnostics.Log(AsciiCapabilities.DescribePresenter(presenter.GetType().Name, renderer.Width, renderer.Height));
+                Diagnostics.Log($\"[AsciiEngine] FrameBuffer: size={renderer.Width}x{renderer.Height}, bufferLen={renderer.BufferLength}.\");
                 app.Init(ctx);
 
                 while (!term.ExitRequested)
@@ -129,9 +128,7 @@ namespace AsciiEngine
                 wh = 25;
             }
 
-            int w = Math.Max(MinWidth, ww);
-            int h = Math.Max(MinHeight, wh);
-            return (w, h);
+            return AsciiSizing.ClampDimensions(ww, wh);
         }
 
         private static ConsoleRenderer CreateRenderer(int w, int h)

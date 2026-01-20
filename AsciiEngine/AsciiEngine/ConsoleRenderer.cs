@@ -30,17 +30,18 @@ namespace AsciiEngine
 
         public void Resize(int w, int h)
         {
-            Width = w;
-            Height = h;
+            (int clampedW, int clampedH) = AsciiSizing.ClampDimensions(w, h);
+            Width = clampedW;
+            Height = clampedH;
 
-            int n = w * h;
+            int n = clampedW * clampedH;
             _chars = new char[n];
             _fg = new Color[n];
             _bg = new Color[n];
             _z = new double[n];
 
-            _dirtyMinX = new int[h];
-            _dirtyMaxX = new int[h];
+            _dirtyMinX = new int[clampedH];
+            _dirtyMaxX = new int[clampedH];
             ResetDirtySpans(fullDirty: true);
 
             // RGB-first default clear
@@ -255,49 +256,7 @@ namespace AsciiEngine
         public void Present()
         {
             _sb.Clear();
-
-            int rough = Width * Height;
-            if (rough > 0) _sb.EnsureCapacity(Math.Min(rough * 4, 2_000_000));
-
-            _sb.Append(Ansi.Home);
-
-            Color curFg = default;
-            Color curBg = default;
-            bool hasFg = false, hasBg = false;
-
-            for (int y = 0; y < Height; y++)
-            {
-                int row = y * Width;
-                if (y > 0)
-                {
-                    _sb.Append('\n');
-                }
-
-                for (int x = 0; x < Width; x++)
-                {
-                    int idx = row + x;
-
-                    Color fg = _fg[idx];
-                    Color bg = _bg[idx];
-
-                    if (!hasFg || fg != curFg)
-                    {
-                        Ansi.AppendFg(_sb, fg);
-                        curFg = fg;
-                        hasFg = true;
-                    }
-                    if (!hasBg || bg != curBg)
-                    {
-                        Ansi.AppendBg(_sb, bg);
-                        curBg = bg;
-                        hasBg = true;
-                    }
-
-                    _sb.Append(_chars[idx]);
-                }
-            }
-
-            _sb.Append(Ansi.Reset);
+            _sb.Append(FrameBuilder.BuildFrameString(_chars, _fg, _bg, Width, Height, AsciiCapabilities.UnicodeOk));
             Console.Write(_sb.ToString());
 
             ResetDirtySpans(fullDirty: false);
