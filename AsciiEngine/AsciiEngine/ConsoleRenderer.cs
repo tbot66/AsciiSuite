@@ -66,8 +66,8 @@ namespace AsciiEngine
             Array.Fill(_chars, c);
 
             // Normalize to RGB24 so everything downstream is truecolor.
-            Color fgc = ColorUtils.ToRgbColor(fg);
-            Color bgc = ColorUtils.ToRgbColor(bg);
+            Color fgc = NormalizeColor(fg);
+            Color bgc = NormalizeColor(bg);
 
             Array.Fill(_fg, fgc);
             Array.Fill(_bg, bgc);
@@ -85,8 +85,8 @@ namespace AsciiEngine
             if (z > _z[idx]) return;
 
             // Normalize to RGB24 (RGB-first policy)
-            fg = ColorUtils.ToRgbColor(fg);
-            bg = ColorUtils.ToRgbColor(bg);
+            fg = NormalizeColor(fg);
+            bg = NormalizeColor(bg);
 
             if (_chars[idx] == c && _fg[idx] == fg && _bg[idx] == bg && _z[idx] == z)
                 return;
@@ -102,7 +102,7 @@ namespace AsciiEngine
 
         public void DrawString(int x, int y, string s, Color fg, Color bg, double z)
         {
-            if (s == null) return;
+            if (string.IsNullOrEmpty(s)) return;
             if ((uint)y >= (uint)Height) return;
 
             for (int i = 0; i < s.Length; i++)
@@ -115,6 +115,7 @@ namespace AsciiEngine
 
         public void DrawRect(int x, int y, int w, int h, char c, Color fg, Color bg, double z)
         {
+            if (w <= 0 || h <= 0) return;
             for (int i = 0; i < w; i++)
             {
                 Set(x + i, y, c, fg, bg, z);
@@ -129,6 +130,7 @@ namespace AsciiEngine
 
         public void FillRect(int x, int y, int w, int h, char c, Color fg, Color bg, double z)
         {
+            if (w <= 0 || h <= 0) return;
             for (int yy = y; yy < y + h; yy++)
                 for (int xx = x; xx < x + w; xx++)
                     Set(xx, yy, c, fg, bg, z);
@@ -297,5 +299,8 @@ namespace AsciiEngine
             _sb.Append(Ansi.Reset);
             Console.Write(_sb.ToString());
         }
+
+        private static Color NormalizeColor(Color color)
+            => color.IsRgb24 ? color : ColorUtils.ToRgbColor(color);
     }
 }

@@ -4,6 +4,11 @@ namespace AsciiEngine
 {
     public static class AsciiRunner
     {
+        private const int MinWidth = 20;
+        private const int MinHeight = 10;
+        private const int MaxWidth = 160;
+        private const int MaxHeight = 60;
+
         // fpsCap: set to 0 for uncapped (not recommended in console)
         public static void Run(IAsciiApp app, int fpsCap)
         {
@@ -16,23 +21,8 @@ namespace AsciiEngine
             TerminalSession term = new TerminalSession();
             try
             {
-                int ww, wh;
-                try
-                {
-                    ww = Console.WindowWidth;
-                    wh = Console.WindowHeight;
-                }
-                catch
-                {
-                    // Fallback for redirected output / unusual terminals.
-                    ww = 80;
-                    wh = 25;
-                }
-
-                int w = Math.Max(20, Math.Min(160, ww));
-                int h = Math.Max(10, Math.Min(60, wh));
-
-                ConsoleRenderer renderer = new ConsoleRenderer(w, h);
+                (int w, int h) = GetInitialSize();
+                ConsoleRenderer renderer = CreateRenderer(w, h);
                 InputState input = new InputState();
 
                 EngineContext ctx = new EngineContext(term, renderer, input);
@@ -56,8 +46,7 @@ namespace AsciiEngine
                     // Resize handling: recreate renderer buffers and re-init app (so it can relayout)
                     if (resized)
                     {
-                        ConsoleRenderer newRenderer2 = new ConsoleRenderer(newW, newH);
-                        ctx.ReplaceRenderer(newRenderer2);
+                        ctx.ReplaceRenderer(CreateRenderer(newW, newH));
                         app.Init(ctx);
                     }
 
@@ -75,5 +64,29 @@ namespace AsciiEngine
                 term.Dispose();
             }
         }
+
+        private static (int w, int h) GetInitialSize()
+        {
+            int ww;
+            int wh;
+            try
+            {
+                ww = Console.WindowWidth;
+                wh = Console.WindowHeight;
+            }
+            catch
+            {
+                // Fallback for redirected output / unusual terminals.
+                ww = 80;
+                wh = 25;
+            }
+
+            int w = Math.Max(MinWidth, Math.Min(MaxWidth, ww));
+            int h = Math.Max(MinHeight, Math.Min(MaxHeight, wh));
+            return (w, h);
+        }
+
+        private static ConsoleRenderer CreateRenderer(int w, int h)
+            => new ConsoleRenderer(w, h);
     }
 }
