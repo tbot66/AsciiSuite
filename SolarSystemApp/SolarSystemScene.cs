@@ -686,7 +686,7 @@ namespace SolarSystemApp
 
         private void HandleArmShip(EngineContext ctx)
         {
-            if (!ctx.Input.WasPressed(ConsoleKey.E)) return;
+            if (!ctx.Input.WasPressed(ConsoleKey.F)) return;
 
             var sel = GetSelection();
             if (sel != null && sel.Kind == EntityKind.Ship)
