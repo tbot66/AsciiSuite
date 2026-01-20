@@ -2,4 +2,5 @@
   <Project Path="AsciiEngine/AsciiEngine.csproj" />
   <Project Path="CircleApp/CircleApp.csproj" />
   <Project Path="SolarSystemApp/SolarSystemApp.csproj" />
+  <Project Path="tests/AsciiEngine.Tests/AsciiEngine.Tests.csproj" />
 </Solution>

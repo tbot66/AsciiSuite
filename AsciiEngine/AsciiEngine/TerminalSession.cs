@@ -1,7 +1,6 @@
 ﻿using System;
 using System.Diagnostics;
 using System.Threading;
-using System.Text;
 
 namespace AsciiEngine
 {
@@ -24,12 +23,7 @@ namespace AsciiEngine
 
         public TerminalSession()
         {
-            try
-            {
-                Console.OutputEncoding = Encoding.UTF8;
-                Console.InputEncoding = Encoding.UTF8;
-            }
-            catch { }
+            AsciiCapabilities.Initialize();
 
             // These can throw if output is redirected; keep best-effort.
             try { _initialBufferW = Console.BufferWidth; } catch { _initialBufferW = 0; }
@@ -95,8 +89,7 @@ namespace AsciiEngine
 
                 TryMatchBufferToWindow();
 
-                newW = Math.Max(1, w);
-                newH = Math.Max(1, h);
+                (newW, newH) = AsciiSizing.ClampDimensions(w, h);
 
                 Diagnostics.Log($"[AsciiEngine] Resize detected: window={w}x{h}, engine={newW}x{newH}, buffer={GetBufferSizeText()}");
             }
