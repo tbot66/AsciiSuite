@@ -2,12 +2,12 @@ using System;
 
 namespace AsciiEngine
 {
-    internal static class Diagnostics
+    public static class Diagnostics
     {
-        internal static readonly bool Enabled =
+        public static readonly bool Enabled =
             !string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("ASCII_DEBUG"));
 
-        internal static void Log(string message)
+        public static void Log(string message)
         {
             if (!Enabled) return;
             Console.Error.WriteLine(message);

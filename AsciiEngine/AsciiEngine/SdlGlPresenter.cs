@@ -418,12 +418,6 @@ namespace AsciiEngine
             throw new FileNotFoundException("No monospace font found. Provide a TTF path (e.g. CascadiaMono.ttf).", fontPath ?? string.Empty);
         }
 
-        private sealed class SdlBindingsContext : IBindingsContext
-        {
-            public IntPtr GetProcAddress(string procName)
-                => SDL.SDL_GL_GetProcAddress(procName);
-        }
-
         public void Dispose()
         {
             if (_disposed) return;
@@ -453,6 +447,8 @@ namespace AsciiEngine
 
             SDL.SDL_Quit();
         }
+
+
 
         private const string BackgroundVertexShader = @"#version 330 core
 layout(location = 0) in vec2 aPos;
