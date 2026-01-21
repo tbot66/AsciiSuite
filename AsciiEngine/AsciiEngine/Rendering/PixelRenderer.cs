@@ -20,6 +20,8 @@ namespace AsciiEngine
         public int ExternalTextureWidth { get; private set; }
         public int ExternalTextureHeight { get; private set; }
 
+        public byte DrawAlpha { get; set; } = 255;
+
         public PixelRenderer(int width, int height)
         {
             Resize(width, height);
@@ -56,13 +58,18 @@ namespace AsciiEngine
 
         public void Clear(Color bg)
         {
+            Clear(bg, 255);
+        }
+
+        public void Clear(Color bg, byte alpha)
+        {
             (byte r, byte g, byte b) = ColorUtils.ToRgbBytes(bg);
             for (int i = 0; i < _buffer.Length; i += 4)
             {
                 _buffer[i] = r;
                 _buffer[i + 1] = g;
                 _buffer[i + 2] = b;
-                _buffer[i + 3] = 255;
+                _buffer[i + 3] = alpha;
             }
         }
 
@@ -75,7 +82,7 @@ namespace AsciiEngine
             _buffer[idx] = r;
             _buffer[idx + 1] = g;
             _buffer[idx + 2] = b;
-            _buffer[idx + 3] = 255;
+            _buffer[idx + 3] = DrawAlpha;
         }
 
         public void FillRect(int x, int y, int w, int h, Color color)
@@ -90,6 +97,7 @@ namespace AsciiEngine
             if (x0 >= x1 || y0 >= y1) return;
 
             (byte r, byte g, byte b) = ColorUtils.ToRgbBytes(color);
+            byte a = DrawAlpha;
 
             for (int yy = y0; yy < y1; yy++)
             {
@@ -99,7 +107,7 @@ namespace AsciiEngine
                     _buffer[row] = r;
                     _buffer[row + 1] = g;
                     _buffer[row + 2] = b;
-                    _buffer[row + 3] = 255;
+                    _buffer[row + 3] = a;
                     row += 4;
                 }
             }
