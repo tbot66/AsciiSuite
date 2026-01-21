@@ -61,6 +61,34 @@ namespace SolarSystemApp.World
             }
         }
 
+        public void Draw(PixelRenderer renderer, int sunX, int sunY, double time, double worldToScreen, double orbitYScale)
+        {
+            if (renderer == null)
+                return;
+
+            for (int i = 0; i < _a.Count; i++)
+            {
+                var a = _a[i];
+
+                double ang = a.Angle0 + time * _baseSpeed * a.SpeedMul;
+
+                double wx = Math.Cos(ang) * a.Radius;
+                double wy = Math.Sin(ang) * a.Radius;
+
+                double px = -Math.Sin(ang) * a.Offset;
+                double py = Math.Cos(ang) * a.Offset;
+
+                int x = sunX + (int)Math.Round((wx + px) * worldToScreen);
+                int y = sunY + (int)Math.Round((wy + py) * worldToScreen * orbitYScale);
+
+                if ((uint)x >= (uint)renderer.Width || (uint)y >= (uint)renderer.Height)
+                    continue;
+
+                Color color = (a.Tier == 1) ? Colors.BrightBlack : Colors.BrightBlack;
+                renderer.SetPixel(x, y, color);
+            }
+        }
+
         private struct Asteroid
         {
             public double Angle0;
