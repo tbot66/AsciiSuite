@@ -16,8 +16,8 @@ namespace SolarSystemApp
         private const double ZoomStep = 1.12;
         private const int StarCount = 220;
         private const double StarSpan = 120.0;
-        private const int DebrisCount = 180;
-        private const double DebrisSpan = 32.0;
+        private const int DebrisCount = 30;
+        private const double DebrisSpan = 128.0;
         private const double DebrisMaxV = 0.22;
         private const double BlackHoleChanceFallback = 0.12;
         private const int PlanetTextureSize = 256;
@@ -51,7 +51,7 @@ namespace SolarSystemApp
         private double _followLerp = 0.18;
 
         private double _simTime;
-        private double _timeScale = 1.0;
+        private double _timeScale = 0.1;
         private bool _paused;
         private double _simAccum;
         private bool _useKepler = true;
@@ -71,7 +71,7 @@ namespace SolarSystemApp
         private bool _galaxyView;
         private double _galCamX;
         private double _galCamY;
-        private double _galZoom = 1.6;
+        private double _galZoom = 1.1;
 
         private readonly List<SelectionItem> _selection = new List<SelectionItem>(64);
         private int _selIndex;
@@ -1552,7 +1552,7 @@ namespace SolarSystemApp
             const double InnerMin = 1.15;
             const double InnerMax = 1.35;
             const double OuterMin = 1.35;
-            const double OuterMax = 1.75;
+            const double OuterMax = 2.75;
 
             double rIn = HashNoise.Hash01(seed, 10, 20);
             double rOut = HashNoise.Hash01(seed, 30, 40);

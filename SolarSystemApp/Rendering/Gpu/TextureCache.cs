@@ -89,7 +89,7 @@ namespace SolarSystemApp.Rendering.Gpu
                     TextureKind.Sun => _sunCompute,
                     _ => _planetCompute
                 };
-
+                
                 program.Use();
                 program.SetUniform("uSeed", key.Seed);
                 program.SetUniform("uType", key.Type);
@@ -111,17 +111,17 @@ namespace SolarSystemApp.Rendering.Gpu
             GL.DrawBuffer(DrawBufferMode.ColorAttachment0);
             GL.Viewport(0, 0, key.Size, key.Size);
 
-            ShaderProgram program = key.Kind switch
+            ShaderProgram fboprogram = key.Kind switch
             {
                 TextureKind.Ring => _ringFbo,
                 TextureKind.Sun => _sunFbo,
                 _ => _planetFbo
             };
 
-            program.Use();
-            program.SetUniform("uSeed", (float)key.Seed);
-            program.SetUniform("uType", key.Type);
-            program.SetUniform("uSize", key.Size);
+            fboprogram.Use();
+            fboprogram.SetUniform("uSeed", (float)key.Seed);
+            fboprogram.SetUniform("uType", key.Type);
+            fboprogram.SetUniform("uSize", key.Size);
             _quad.Draw();
 
             GL.BindFramebuffer(FramebufferTarget.Framebuffer, 0);

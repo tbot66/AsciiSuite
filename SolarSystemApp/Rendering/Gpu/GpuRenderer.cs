@@ -200,7 +200,7 @@ namespace SolarSystemApp.Rendering.Gpu
             _legacyFrameActive = false;
         }
 
-        public void RenderFrame(
+        internal void RenderFrame(
             int width,
             int height,
             Matrix4 viewProj,
@@ -727,13 +727,7 @@ namespace SolarSystemApp.Rendering.Gpu
             GL.BindBuffer(buffer.Target, handle);
             if (buffer.MappedPtr != IntPtr.Zero)
             {
-                unsafe
-                {
-                    fixed (T* src = arr)
-                    {
-                        Buffer.MemoryCopy(src, (void*)buffer.MappedPtr, buffer.Capacity, size);
-                    }
-                }
+                
             }
             else
             {
