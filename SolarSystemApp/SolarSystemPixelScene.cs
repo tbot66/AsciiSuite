@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using AsciiEngine;
+using SolarSystemApp.Rendering;
+using SolarSystemApp.Rendering.Gpu;
 using SolarSystemApp.Util;
 using SolarSystemApp.World;
 using Color = global::AsciiEngine.Color;
@@ -37,6 +39,9 @@ namespace SolarSystemApp
         private double _targetOrbitYScale = 0.55;
         private int _centerX;
         private int _centerY;
+
+        private readonly RenderMode _renderMode;
+        private GpuRenderer? _gpuRenderer;
 
         private bool _smoothCam = true;
         private double _panResponsiveness = 14.0;
@@ -210,6 +215,11 @@ namespace SolarSystemApp
             public double WZ;
         }
 
+        public SolarSystemPixelScene()
+        {
+            _renderMode = GetInitialRenderMode();
+        }
+
         public void Init(PixelEngineContext ctx)
         {
             _galaxy.Build(seed: 12345, count: 100);
@@ -241,6 +251,8 @@ namespace SolarSystemApp
         public void Draw(PixelEngineContext ctx)
         {
             PixelRenderer renderer = ctx.Renderer;
+            if (_renderMode == RenderMode.CpuPixel)
+                renderer.ClearExternalTexture();
             renderer.Clear(Color.FromRgb(6, 8, 16));
 
             _centerX = ctx.Width / 2;
@@ -286,9 +298,18 @@ namespace SolarSystemApp
                     DrawSun(renderer);
             }
 
-            BuildOccluders();
             DrawStations(renderer);
-            DrawPlanets(renderer, _occluders, _occluderDepths);
+
+            if (_renderMode == RenderMode.Gpu)
+            {
+                DrawPlanetLabels(renderer);
+            }
+            else
+            {
+                BuildOccluders();
+                DrawPlanets(renderer, _occluders, _occluderDepths);
+            }
+
             DrawAsteroids(renderer, ctx);
             DrawShips(renderer);
             DrawSelection(renderer);
@@ -297,6 +318,19 @@ namespace SolarSystemApp
                 DrawSunFlare(renderer, sunX, sunY, _centerX, _centerY, _fxFlareStrength, _simTime);
 
             DrawUi(renderer, ctx);
+
+            if (_renderMode == RenderMode.Gpu)
+            {
+                EnsureGpuRenderer();
+                if (_gpuRenderer != null)
+                {
+                    _gpuRenderer.BeginFrame(ctx.Width, ctx.Height, 0f, 0f, 0f);
+                    _gpuRenderer.DrawBackground(renderer.BufferArray, ctx.Width, ctx.Height);
+                    DrawPlanetsGpu(ctx, _gpuRenderer);
+                    _gpuRenderer.EndFrame();
+                    renderer.SetExternalTexture(_gpuRenderer.OutputTextureId, ctx.Width, ctx.Height);
+                }
+            }
         }
 
         private void HandleInput(PixelEngineContext ctx)
@@ -878,6 +912,176 @@ namespace SolarSystemApp
                     DrawMoonBody(renderer, moon, occluders, occluderDepths);
                 }
             }
+        }
+
+        private void DrawPlanetsGpu(PixelEngineContext ctx, GpuRenderer gpu)
+        {
+            if (_sys == null)
+                return;
+
+            int height = ctx.Height;
+            for (int i = 0; i < _sys.Planets.Count; i++)
+            {
+                Planet planet = _sys.Planets[i];
+                DrawPlanetBodyGpu(gpu, height, planet);
+
+                for (int m = 0; m < planet.Moons.Count; m++)
+                {
+                    Moon moon = planet.Moons[m];
+                    DrawMoonBodyGpu(gpu, height, moon);
+                }
+            }
+        }
+
+        private void DrawPlanetBodyGpu(GpuRenderer gpu, int screenHeight, Planet planet)
+        {
+            int seed = _sys == null ? 0 : _sys.Seed ^ (planet.Name?.GetHashCode() ?? 0);
+            double spinTurns = PlanetDrawer.SpinTurns(_simTime, planet.SpinSpeed);
+            DrawTexturedBodyGpu(
+                gpu,
+                screenHeight,
+                planet.WX,
+                planet.WY,
+                planet.RadiusWorld,
+                planet.Texture,
+                seed,
+                spinTurns,
+                planet.AxisTilt,
+                planet.WZ);
+        }
+
+        private void DrawMoonBodyGpu(GpuRenderer gpu, int screenHeight, Moon moon)
+        {
+            int seed = _sys == null ? 0 : _sys.Seed ^ (moon.Name?.GetHashCode() ?? 0);
+            double spinTurns = ComputeMoonSpinTurns(moon, seed);
+            DrawTexturedBodyGpu(
+                gpu,
+                screenHeight,
+                moon.WX,
+                moon.WY,
+                moon.RadiusWorld,
+                moon.Texture,
+                seed,
+                spinTurns,
+                axisTilt: 0.0,
+                moon.WZ);
+        }
+
+        private void DrawTexturedBodyGpu(
+            GpuRenderer gpu,
+            int screenHeight,
+            double wx,
+            double wy,
+            double radiusWorld,
+            PlanetDrawer.PlanetTexture texture,
+            int seed,
+            double spinTurns,
+            double axisTilt,
+            double bodyDepth)
+        {
+            int cx = WorldToScreenX(wx);
+            int cy = WorldToScreenY(wy);
+            int r = Math.Max(1, (int)Math.Round(radiusWorld * _worldToScreen));
+            if (r <= 0)
+                return;
+
+            ComputeLightDir(wx, wy, out double lx, out double ly, out double lz);
+            PlanetPalette palette = BuildPalette(texture, seed);
+            PlanetPalette emissive = BuildEmissivePalette(texture, seed);
+
+            int glCenterY = screenHeight - 1 - cy;
+            float depth = MapDepth(bodyDepth);
+
+            gpu.DrawSphere(
+                cx,
+                glCenterY,
+                r,
+                seed,
+                (int)texture,
+                (float)spinTurns,
+                (float)axisTilt,
+                (float)lx,
+                (float)ly,
+                (float)lz,
+                depth,
+                palette,
+                emissive);
+        }
+
+        private void DrawPlanetLabels(PixelRenderer renderer)
+        {
+            if (!_showLabels || _sys == null)
+                return;
+
+            for (int i = 0; i < _sys.Planets.Count; i++)
+            {
+                Planet planet = _sys.Planets[i];
+                int cx = WorldToScreenX(planet.WX);
+                int cy = WorldToScreenY(planet.WY);
+                int r = Math.Max(1, (int)Math.Round(planet.RadiusWorld * _worldToScreen));
+                DrawText(renderer, cx + r + 2, cy - r - 2, planet.Name, Colors.BrightWhite);
+
+                for (int m = 0; m < planet.Moons.Count; m++)
+                {
+                    Moon moon = planet.Moons[m];
+                    int mx = WorldToScreenX(moon.WX);
+                    int my = WorldToScreenY(moon.WY);
+                    int mr = Math.Max(1, (int)Math.Round(moon.RadiusWorld * _worldToScreen));
+                    DrawText(renderer, mx + mr + 2, my - mr - 2, moon.Name, Colors.BrightWhite);
+                }
+            }
+        }
+
+        private static PlanetPalette BuildPalette(PlanetDrawer.PlanetTexture texture, int seed)
+        {
+            PlanetTextures.PaletteId pal = PlanetTextures.PickPaletteVariant(seed, texture);
+            PlanetTextures.GetPalette(texture, pal, out var dark, out var mid, out var light);
+
+            return new PlanetPalette(
+                dark.r / 255f, dark.g / 255f, dark.b / 255f,
+                mid.r / 255f, mid.g / 255f, mid.b / 255f,
+                light.r / 255f, light.g / 255f, light.b / 255f);
+        }
+
+        private static PlanetPalette BuildEmissivePalette(PlanetDrawer.PlanetTexture texture, int seed)
+        {
+            if (texture != PlanetDrawer.PlanetTexture.Lava)
+                return new PlanetPalette(0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0f);
+
+            PlanetTextures.PaletteId pal = PlanetTextures.PickPaletteVariant(seed, texture);
+            PlanetTextures.GetPalette(texture, pal, out var dark, out var mid, out var light);
+
+            return new PlanetPalette(
+                dark.r / 255f, dark.g / 255f, dark.b / 255f,
+                mid.r / 255f, mid.g / 255f, mid.b / 255f,
+                light.r / 255f, light.g / 255f, light.b / 255f);
+        }
+
+        private static float MapDepth(double bodyDepth)
+        {
+            double depth = 0.5 + bodyDepth * 0.4;
+            if (depth < 0.05) depth = 0.05;
+            if (depth > 0.95) depth = 0.95;
+            return (float)depth;
+        }
+
+        private void EnsureGpuRenderer()
+        {
+            if (_gpuRenderer == null)
+                _gpuRenderer = new GpuRenderer();
+        }
+
+        private static RenderMode GetInitialRenderMode()
+        {
+            string? env = Environment.GetEnvironmentVariable("SOLAR_RENDER_MODE");
+            if (string.IsNullOrWhiteSpace(env))
+                return RenderMode.CpuPixel;
+
+            env = env.Trim();
+            if (env.Equals("gpu", StringComparison.OrdinalIgnoreCase))
+                return RenderMode.Gpu;
+
+            return RenderMode.CpuPixel;
         }
 
         private void DrawAsteroids(PixelRenderer renderer, PixelEngineContext ctx)

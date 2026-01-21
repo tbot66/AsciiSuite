@@ -12,7 +12,13 @@ namespace AsciiEngine
         public int BufferLength => _buffer.Length;
 
         internal byte[] Buffer => _buffer;
+        public byte[] BufferArray => _buffer;
         public ReadOnlySpan<byte> Pixels => _buffer;
+
+        public bool UseExternalTexture { get; private set; }
+        public int ExternalTextureId { get; private set; }
+        public int ExternalTextureWidth { get; private set; }
+        public int ExternalTextureHeight { get; private set; }
 
         public PixelRenderer(int width, int height)
         {
@@ -30,6 +36,22 @@ namespace AsciiEngine
             _buffer = new byte[w * h * 4];
 
             Diagnostics.Log($"[AsciiEngine] PixelRenderer resize: size={Width}x{Height}, bufferLen={_buffer.Length}.");
+        }
+
+        public void SetExternalTexture(int textureId, int width, int height)
+        {
+            ExternalTextureId = textureId;
+            ExternalTextureWidth = width;
+            ExternalTextureHeight = height;
+            UseExternalTexture = textureId != 0 && width > 0 && height > 0;
+        }
+
+        public void ClearExternalTexture()
+        {
+            UseExternalTexture = false;
+            ExternalTextureId = 0;
+            ExternalTextureWidth = 0;
+            ExternalTextureHeight = 0;
         }
 
         public void Clear(Color bg)
