@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using AsciiEngine;
+using OpenTK.Mathematics;
 using SolarSystemApp.Rendering;
 using SolarSystemApp.Rendering.Gpu;
 using SolarSystemApp.Util;
@@ -39,6 +40,22 @@ namespace SolarSystemApp
         private double _targetOrbitYScale = 0.55;
         private int _centerX;
         private int _centerY;
+        private Camera3D _camera3D = Camera3D.CreatePerspective(
+            new Vector3(0f, 0f, 60f),
+            Quaternion.Identity,
+            MathHelper.DegreesToRadians(45f),
+            1f,
+            0.1f,
+            5000f);
+        private Vector3 _cameraTarget = Vector3.Zero;
+
+        private bool _mmbDrag;
+        private int _mmbLastX;
+        private int _mmbLastY;
+        private int _mmbLastDx;
+        private int _mmbLastDy;
+        private float _panSpeed = 1.0f;
+        private float _dollySpeed = 6.0f;
 
         private readonly RenderMode _renderMode;
         private GpuRenderer? _gpuRenderer;
@@ -233,6 +250,11 @@ namespace SolarSystemApp
             SetActiveSystem(0, resetSimTime: true);
             FitSystemToView(ctx);
             SnapCamera(0.0, 0.0, _worldToScreen, _orbitYScale);
+
+            _cameraTarget = new Vector3((float)_camWX, (float)_camWY, 0f);
+            _camera3D.Position = _cameraTarget + new Vector3(0f, 0f, 60f);
+            _camera3D.AspectRatio = Math.Max(1f, ctx.Width / (float)Math.Max(1, ctx.Height));
+            UpdateCamera3DOrientation();
         }
 
         public void Update(PixelEngineContext ctx)
@@ -336,6 +358,7 @@ namespace SolarSystemApp
         private void HandleInput(PixelEngineContext ctx)
         {
             InputState input = ctx.Input;
+            _camera3D.AspectRatio = Math.Max(1f, ctx.Width / (float)Math.Max(1, ctx.Height));
 
             if (input.WasPressed(ConsoleKey.G))
             {
@@ -349,6 +372,8 @@ namespace SolarSystemApp
                 HandleGalaxyInput(input);
                 return;
             }
+
+            HandleMouseCameraInput(ctx, input);
 
             if (input.WasPressed(ConsoleKey.Spacebar))
                 _paused = !_paused;
@@ -552,12 +577,23 @@ namespace SolarSystemApp
                 }
             }
 
+            if (_mmbDrag)
+            {
+                _camWX = _targetCamWX;
+                _camWY = _targetCamWY;
+                _worldToScreen = _targetWorldToScreen;
+                _orbitYScale = _targetOrbitYScale;
+                SyncCamera3DTarget();
+                return;
+            }
+
             if (!_smoothCam)
             {
                 _camWX = _targetCamWX;
                 _camWY = _targetCamWY;
                 _worldToScreen = _targetWorldToScreen;
                 _orbitYScale = _targetOrbitYScale;
+                SyncCamera3DTarget();
                 return;
             }
 
@@ -568,6 +604,7 @@ namespace SolarSystemApp
             _camWY = Lerp(_camWY, _targetCamWY, aPan);
             _worldToScreen = Lerp(_worldToScreen, _targetWorldToScreen, aZoom);
             _orbitYScale = Lerp(_orbitYScale, _targetOrbitYScale, aZoom);
+            SyncCamera3DTarget();
         }
 
         private void DrawStarfield(PixelRenderer renderer, PixelEngineContext ctx)
@@ -1292,6 +1329,15 @@ namespace SolarSystemApp
                 SelectionItem item = sel.Value;
                 string info = $"Selected: {item.Label} ({item.Kind}) @ {item.WX:0.0},{item.WY:0.0}";
                 DrawText(renderer, 4, 14, info, Colors.BrightYellow);
+            }
+
+            if (_mmbDrag)
+            {
+                int debugY = sel.HasValue ? 24 : 14;
+                string debug = $"MMB PAN pos=({_camera3D.Position.X:0.00},{_camera3D.Position.Y:0.00},{_camera3D.Position.Z:0.00}) " +
+                               $"target=({_cameraTarget.X:0.00},{_cameraTarget.Y:0.00},{_cameraTarget.Z:0.00}) " +
+                               $"dx={_mmbLastDx} dy={_mmbLastDy}";
+                DrawText(renderer, 4, debugY, debug, Colors.BrightCyan);
             }
 
             int lineHeight = _font.Height + 2;
@@ -2327,6 +2373,115 @@ namespace SolarSystemApp
             _camWY = _targetCamWY = wy;
             _worldToScreen = _targetWorldToScreen = zoom;
             _orbitYScale = _targetOrbitYScale = orbitScale;
+        }
+
+        private void HandleMouseCameraInput(PixelEngineContext ctx, InputState input)
+        {
+            if (_sys == null)
+                return;
+
+            if (input.MouseMiddlePressed)
+            {
+                _mmbDrag = true;
+                _mmbLastX = input.MouseX;
+                _mmbLastY = input.MouseY;
+                _mmbLastDx = 0;
+                _mmbLastDy = 0;
+            }
+
+            if (input.MouseMiddleReleased)
+            {
+                _mmbDrag = false;
+                _mmbLastDx = 0;
+                _mmbLastDy = 0;
+            }
+
+            if (_mmbDrag)
+            {
+                int dxPx = input.MouseX - _mmbLastX;
+                int dyPx = input.MouseY - _mmbLastY;
+                _mmbLastX = input.MouseX;
+                _mmbLastY = input.MouseY;
+                _mmbLastDx = dxPx;
+                _mmbLastDy = dyPx;
+
+                if (dxPx != 0 || dyPx != 0)
+                {
+                    Vector3 forward = _cameraTarget - _camera3D.Position;
+                    if (forward.LengthSquared < 1e-6f)
+                        forward = -Vector3.UnitZ;
+                    forward = Vector3.Normalize(forward);
+
+                    Vector3 right = Vector3.Cross(forward, Vector3.UnitY);
+                    if (right.LengthSquared < 1e-6f)
+                        right = Vector3.UnitX;
+                    right = Vector3.Normalize(right);
+                    Vector3 up = Vector3.Normalize(Vector3.Cross(right, forward));
+
+                    float distance = (_cameraTarget - _camera3D.Position).Length;
+                    float fovY = _camera3D.FieldOfViewRadians;
+                    float pixelsToWorldY = 2f * distance * MathF.Tan(fovY * 0.5f) / Math.Max(1, ctx.Height);
+                    float pixelsToWorldX = pixelsToWorldY * (ctx.Width / (float)Math.Max(1, ctx.Height));
+
+                    Vector3 pan = (-dxPx * pixelsToWorldX * _panSpeed) * right
+                                  + (dyPx * pixelsToWorldY * _panSpeed) * up;
+
+                    _camera3D.Position += pan;
+                    _cameraTarget += pan;
+                    _targetCamWX += pan.X;
+                    _targetCamWY += pan.Y;
+                    UpdateCamera3DOrientation();
+
+                    if (_follow)
+                        _follow = false;
+                }
+            }
+
+            if (input.MouseWheelDelta != 0)
+            {
+                Vector3 forward = _cameraTarget - _camera3D.Position;
+                if (forward.LengthSquared < 1e-6f)
+                    forward = -Vector3.UnitZ;
+                forward = Vector3.Normalize(forward);
+
+                _camera3D.Position += forward * (-input.MouseWheelDelta) * _dollySpeed * (float)ctx.DeltaTime;
+                UpdateCamera3DOrientation();
+            }
+        }
+
+        private void SyncCamera3DTarget()
+        {
+            Vector3 newTarget = new Vector3((float)_camWX, (float)_camWY, 0f);
+            Vector3 delta = newTarget - _cameraTarget;
+            if (delta.LengthSquared > 0f)
+            {
+                _camera3D.Position += delta;
+                _cameraTarget = newTarget;
+            }
+
+            UpdateCamera3DOrientation();
+        }
+
+        private void UpdateCamera3DOrientation()
+        {
+            Vector3 forward = _cameraTarget - _camera3D.Position;
+            if (forward.LengthSquared < 1e-6f)
+                forward = -Vector3.UnitZ;
+            forward = Vector3.Normalize(forward);
+
+            Vector3 right = Vector3.Cross(forward, Vector3.UnitY);
+            if (right.LengthSquared < 1e-6f)
+                right = Vector3.UnitX;
+            right = Vector3.Normalize(right);
+
+            Vector3 up = Vector3.Normalize(Vector3.Cross(right, forward));
+
+            Matrix3 rotation = new Matrix3(
+                right.X, right.Y, right.Z,
+                up.X, up.Y, up.Z,
+                -forward.X, -forward.Y, -forward.Z);
+
+            _camera3D.Orientation = Quaternion.FromMatrix(rotation);
         }
 
         private void RebuildSelection()
