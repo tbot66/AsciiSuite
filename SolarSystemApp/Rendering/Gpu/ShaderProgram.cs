@@ -1,11 +1,13 @@
 using System;
 using OpenTK.Graphics.OpenGL4;
+using OpenTK.Mathematics;
 
 namespace SolarSystemApp.Rendering.Gpu
 {
     public sealed class ShaderProgram : IDisposable
     {
         public int Handle { get; }
+        public bool IsCompute { get; }
 
         public ShaderProgram(string vertexSource, string fragmentSource)
         {
@@ -31,6 +33,28 @@ namespace SolarSystemApp.Rendering.Gpu
             GL.DetachShader(Handle, fragment);
             GL.DeleteShader(vertex);
             GL.DeleteShader(fragment);
+        }
+
+        public ShaderProgram(string computeSource)
+        {
+            int compute = CompileShader(ShaderType.ComputeShader, computeSource);
+
+            Handle = GL.CreateProgram();
+            GL.AttachShader(Handle, compute);
+            GL.LinkProgram(Handle);
+
+            GL.GetProgram(Handle, GetProgramParameterName.LinkStatus, out int status);
+            if (status == 0)
+            {
+                string info = GL.GetProgramInfoLog(Handle);
+                GL.DeleteProgram(Handle);
+                GL.DeleteShader(compute);
+                throw new InvalidOperationException($"Compute shader link failed: {info}");
+            }
+
+            GL.DetachShader(Handle, compute);
+            GL.DeleteShader(compute);
+            IsCompute = true;
         }
 
         public void Use()
@@ -64,6 +88,20 @@ namespace SolarSystemApp.Rendering.Gpu
             int loc = GL.GetUniformLocation(Handle, name);
             if (loc >= 0)
                 GL.Uniform3(loc, x, y, z);
+        }
+
+        public void SetUniform(string name, float x, float y, float z, float w)
+        {
+            int loc = GL.GetUniformLocation(Handle, name);
+            if (loc >= 0)
+                GL.Uniform4(loc, x, y, z, w);
+        }
+
+        public void SetUniform(string name, Matrix4 value)
+        {
+            int loc = GL.GetUniformLocation(Handle, name);
+            if (loc >= 0)
+                GL.UniformMatrix4(loc, false, ref value);
         }
 
         public void Dispose()
