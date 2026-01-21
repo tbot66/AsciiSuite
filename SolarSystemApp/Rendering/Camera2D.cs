@@ -1,4 +1,5 @@
-﻿using System;
+using System;
+using OpenTK.Mathematics;
 using SolarSystemApp.Util;
 
 namespace SolarSystemApp.Rendering
@@ -7,7 +8,6 @@ namespace SolarSystemApp.Rendering
     {
         // zoom: chars per world unit
         public double WorldToScreen { get; set; } = 10.0;
-
 
         // orbit vertical squash
         public double OrbitYScale { get; set; } = 0.55;
@@ -46,6 +46,18 @@ namespace SolarSystemApp.Rendering
         {
             wx = CamWX + (sx - CenterX) / Math.Max(0.000001, WorldToScreen);
             wy = CamWY + (sy - CenterY) / Math.Max(0.000001, (WorldToScreen * OrbitYScale));
+        }
+
+        public Matrix4 GetViewProjMatrix(int viewportWidth, int viewportHeight)
+        {
+            float w = Math.Max(1, viewportWidth);
+            float h = Math.Max(1, viewportHeight);
+            float sx = (float)(2.0 * WorldToScreen / w);
+            float sy = (float)(2.0 * WorldToScreen * OrbitYScale / h);
+
+            Matrix4 scale = Matrix4.CreateScale(sx, sy, 1f);
+            Matrix4 translate = Matrix4.CreateTranslation((float)(-CamWX), (float)(-CamWY), 0f);
+            return scale * translate;
         }
 
         // Existing behavior: immediate pan.
