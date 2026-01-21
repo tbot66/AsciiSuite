@@ -1,7 +1,6 @@
 using System;
 using System.Collections.Generic;
 using AsciiEngine;
-using SolarSystemApp.Rendering;
 using SolarSystemApp.Util;
 using SolarSystemApp.World;
 using Color = global::AsciiEngine.Color;
@@ -21,6 +20,7 @@ namespace SolarSystemApp
         private const double BlackHoleChanceFallback = 0.12;
         private const int PlanetTextureSize = 256;
         private const double SunCacheInterval = 0.18;
+        private const double BeltChance = 0.55;
 
         private readonly Galaxy _galaxy = new Galaxy();
         private StarSystem? _sys;
@@ -56,6 +56,12 @@ namespace SolarSystemApp
         private bool _showStarfield = true;
         private bool _showDebris = true;
         private bool _showNebula = true;
+        private bool _showBelts = true;
+        private bool _showRings = true;
+
+        private bool _fxEnabled = true;
+        private bool _fxLensFlare = true;
+        private double _fxFlareStrength = 1.00;
 
         private bool _galaxyView;
         private double _galCamX;
@@ -80,6 +86,8 @@ namespace SolarSystemApp
         private SunTextureCache? _sunCache;
         private PlanetDrawer.Occluder[] _occluders = Array.Empty<PlanetDrawer.Occluder>();
         private double[] _occluderDepths = Array.Empty<double>();
+
+        private Belt? _belt;
 
         private struct StarPt
         {
@@ -257,24 +265,37 @@ namespace SolarSystemApp
             if (_showNebula)
                 DrawNebula(renderer);
 
-            DrawAsteroids(renderer, ctx);
-
-            if (_showDebris)
-                DrawDebris(renderer, ctx);
-
             if (_showOrbits)
                 DrawOrbits(renderer);
 
-            if (IsBlackHoleSystem(_sys, _systemIndex))
-                DrawBlackHole(renderer);
-            else
-                DrawSun(renderer);
+            int sunX = WorldToScreenX(0.0);
+            int sunY = WorldToScreenY(0.0);
+
+            bool isBlackHole = IsBlackHoleSystem(_sys, _systemIndex);
+            if (_sys.HasStar)
+            {
+                if (_showBelts && _belt != null)
+                    _belt.Draw(renderer, sunX, sunY, _simTime, _worldToScreen, _orbitYScale);
+
+                if (_showDebris && _belt == null)
+                    DrawDebris(renderer, ctx);
+
+                if (isBlackHole)
+                    DrawBlackHole(renderer);
+                else
+                    DrawSun(renderer);
+            }
 
             BuildOccluders();
-            DrawPlanets(renderer, _occluders, _occluderDepths);
             DrawStations(renderer);
+            DrawPlanets(renderer, _occluders, _occluderDepths);
+            DrawAsteroids(renderer, ctx);
             DrawShips(renderer);
             DrawSelection(renderer);
+
+            if (_fxEnabled && _fxLensFlare && _sys.HasStar && !isBlackHole)
+                DrawSunFlare(renderer, sunX, sunY, _centerX, _centerY, _fxFlareStrength, _simTime);
+
             DrawUi(renderer, ctx);
         }
 
@@ -304,20 +325,29 @@ namespace SolarSystemApp
             if (input.WasPressed(ConsoleKey.L))
                 _showLabels = !_showLabels;
 
-            if (input.WasPressed(ConsoleKey.H))
+            if (input.WasPressed(ConsoleKey.F1))
                 _showStarfield = !_showStarfield;
 
             if (input.WasPressed(ConsoleKey.N))
                 _showNebula = !_showNebula;
 
             if (input.WasPressed(ConsoleKey.B))
-                _showDebris = !_showDebris;
+                _showBelts = !_showBelts;
+
+            if (input.WasPressed(ConsoleKey.H))
+                _showRings = !_showRings;
 
             if (input.WasPressed(ConsoleKey.K))
                 _useKepler = !_useKepler;
 
             if (input.WasPressed(ConsoleKey.F))
                 _follow = !_follow;
+
+            if (input.WasPressed(ConsoleKey.F2))
+                _fxEnabled = !_fxEnabled;
+
+            if (input.WasPressed(ConsoleKey.F3))
+                _fxLensFlare = !_fxLensFlare;
 
             if (input.WasPressed(ConsoleKey.Z))
                 CycleSelection(-1);
@@ -695,6 +725,74 @@ namespace SolarSystemApp
             }
         }
 
+        private void DrawSunFlare(PixelRenderer renderer, int sunX, int sunY, int centerX, int centerY, double strength, double simTime)
+        {
+            strength = MathUtil.Clamp(strength, 0.0, 1.0);
+            if (strength <= 0.001)
+                return;
+
+            int dx = centerX - sunX;
+            int dy = centerY - sunY;
+
+            double dist = Math.Sqrt(dx * dx + dy * dy);
+            if (dist < 1.0) dist = 1.0;
+
+            double nx = dx / dist;
+            double ny = dy / dist;
+
+            int len = MathUtil.ClampInt((int)Math.Round(40 + 90 * strength), 30, 180);
+            for (int i = 0; i <= len; i += 2)
+            {
+                double t = i / (double)len;
+                int x = sunX + (int)Math.Round(nx * i);
+                int y = sunY + (int)Math.Round(ny * i);
+                if ((uint)x >= (uint)renderer.Width || (uint)y >= (uint)renderer.Height)
+                    continue;
+
+                double n = HashNoise.ValueNoise(unchecked((int)0x13579BDF), x * 0.07 + simTime * 0.25, y * 0.07);
+                double b = (1.0 - t) * (0.45 + 0.55 * strength) * (0.80 + 0.40 * (n - 0.5));
+                b = MathUtil.Clamp(b, 0.0, 1.0);
+                if (b < 0.12)
+                    continue;
+
+                Color baseColor = (b > 0.65) ? Colors.BrightWhite : Colors.BrightBlack;
+                Color color = ColorUtils.Shade(baseColor, MathUtil.Clamp(b, 0.25, 1.0));
+                renderer.SetPixel(x, y, color);
+            }
+
+            for (int g = 1; g <= 4; g++)
+            {
+                double gt = g / 5.0;
+                double along = dist * (0.25 + 0.22 * g);
+                int gx = (int)Math.Round(centerX + (-nx) * along);
+                int gy = (int)Math.Round(centerY + (-ny) * along);
+
+                int gr = MathUtil.ClampInt((int)Math.Round(2 + g * 2 * strength), 2, 10);
+                int gr2 = gr * gr;
+
+                for (int yy = -gr; yy <= gr; yy++)
+                {
+                    int py = gy + yy;
+                    for (int xx = -gr; xx <= gr; xx++)
+                    {
+                        if (xx * xx + yy * yy > gr2)
+                            continue;
+
+                        int px = gx + xx;
+                        if ((uint)px >= (uint)renderer.Width || (uint)py >= (uint)renderer.Height)
+                            continue;
+
+                        double b = (0.16 + 0.22 * strength) * (1.0 - gt);
+                        if (b < 0.12)
+                            continue;
+
+                        Color color = ColorUtils.Shade(Colors.BrightBlack, MathUtil.Clamp(b, 0.0, 1.0));
+                        renderer.SetPixel(px, py, color);
+                    }
+                }
+            }
+        }
+
         private void DrawBlackHole(PixelRenderer renderer)
         {
             int cx = WorldToScreenX(0.0);
@@ -787,6 +885,8 @@ namespace SolarSystemApp
             if (_sys == null || _sys.Asteroids.Count == 0)
                 return;
 
+            SelectionItem? selection = GetSelection();
+
             for (int i = 0; i < _sys.Asteroids.Count; i++)
             {
                 Asteroid asteroid = _sys.Asteroids[i];
@@ -795,12 +895,45 @@ namespace SolarSystemApp
                 if ((uint)x >= (uint)ctx.Width || (uint)y >= (uint)ctx.Height)
                     continue;
 
+                bool selected = selection.HasValue && selection.Value.Kind == SelectionKind.Asteroid && selection.Value.Index == i;
+
                 int r = Math.Max(1, (int)Math.Round(asteroid.RadiusWorld * _worldToScreen));
-                Color c = ColorUtils.ToRgbColor((Color)asteroid.Fg);
+                Color c = selected ? Colors.BrightYellow : ColorUtils.ToRgbColor((Color)asteroid.Fg);
                 if (r <= 1)
+                {
                     renderer.SetPixel(x, y, c);
+                }
                 else
+                {
                     renderer.FillCircle(x, y, r, c);
+
+                    int seed = _sys.Seed ^ (i * 733);
+                    for (int oy = -1; oy <= 1; oy++)
+                    {
+                        int py = y + oy;
+                        if ((uint)py >= (uint)ctx.Height)
+                            continue;
+
+                        for (int ox = -1; ox <= 1; ox++)
+                        {
+                            if (ox == 0 && oy == 0)
+                                continue;
+
+                            int px = x + ox;
+                            if ((uint)px >= (uint)ctx.Width)
+                                continue;
+
+                            double n = HashNoise.Hash01(seed, px + 11, py + 17);
+                            if (n < 0.82)
+                                continue;
+
+                            renderer.SetPixel(px, py, Colors.BrightBlack);
+                        }
+                    }
+                }
+
+                if (_showLabels && selected)
+                    DrawText(renderer, x + 4, y - 4, $"Asteroid-{i + 1}", Colors.BrightYellow);
             }
         }
 
@@ -967,8 +1100,8 @@ namespace SolarSystemApp
                     break;
             }
 
-            string controls = "WASD/Arrows Pan  U/J Zoom  Z/X Select  F Follow  G Galaxy  O Orbits  L Labels";
-            DrawText(renderer, 4, ctx.Height - 12, controls, Colors.BrightCyan);
+            string controls = "WASD/Arrows Pan  U/J Zoom  Z/X Select  F Follow  G Galaxy\nO Orbits  L Labels  B Belts  H Rings  F1 Stars  N Nebula";
+            DrawText(renderer, 4, ctx.Height - 24, controls, Colors.BrightCyan);
         }
 
         private void DrawGalaxyView(PixelRenderer renderer, PixelEngineContext ctx)
@@ -1086,14 +1219,14 @@ namespace SolarSystemApp
             ComputeLightDir(wx, wy, out double lx, out double ly, out double lz);
 
             RingParams ringParams = default;
-            bool hasRings = rings;
-            if (rings)
+            bool hasRings = rings && _showRings;
+            if (hasRings)
                 ringParams = BuildRingParams(seed, axisTilt, _simTime);
 
             DrawTexturedSphere(renderer, cx, cy, r, spinTurns, axisTilt, cache, lx, ly, lz,
                 hasRings, ringParams, bodyDepth, occluders, occluderDepths);
 
-            if (rings)
+            if (hasRings)
             {
                 DrawRings(renderer, cx, cy, r, texture, seed, ringParams, lx, ly, lz,
                     bodyDepth, occluders, occluderDepths);
@@ -1929,6 +2062,8 @@ namespace SolarSystemApp
             _targetCamWX = 0.0;
             _targetCamWY = 0.0;
 
+            BuildBeltForSystem();
+
             _starSeedBuilt = int.MinValue;
             _debrisSeedBuilt = int.MinValue;
             _planetTextureCache.Clear();
@@ -1940,6 +2075,31 @@ namespace SolarSystemApp
                 RebuildSelection();
                 _events.Add(_simTime, $"Entered system: {_sys.Name}");
             }
+        }
+
+        private void BuildBeltForSystem()
+        {
+            if (_sys == null)
+            {
+                _belt = null;
+                return;
+            }
+
+            int seed = _sys.Seed ^ 0x4B1D_77A3;
+            double roll = HashNoise.Hash01(seed, 11, 22);
+
+            if (roll > BeltChance)
+            {
+                _belt = null;
+                return;
+            }
+
+            double radius = 9.5 + 6.0 * HashNoise.Hash01(seed, 33, 44);
+            double thickness = 0.6 + 1.2 * HashNoise.Hash01(seed, 55, 66);
+            int count = 140 + (int)Math.Round(220 * HashNoise.Hash01(seed, 77, 88));
+            double speed = 0.06 + 0.14 * HashNoise.Hash01(seed, 99, 111);
+
+            _belt = new Belt(seed: _sys.Seed + 77, count: count, radius: radius, thickness: thickness, baseSpeed: speed);
         }
 
         private void FitSystemToView(PixelEngineContext ctx)
