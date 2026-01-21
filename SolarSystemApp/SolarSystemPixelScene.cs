@@ -3,11 +3,8 @@ using System.Collections.Generic;
 using AsciiEngine;
 using SolarSystemApp.Rendering;
 using SolarSystemApp.Rendering.Gpu;
-using SolarSystemApp.Rendering.Modern;
 using SolarSystemApp.Util;
 using SolarSystemApp.World;
-using OpenTK.Graphics.OpenGL4;
-using OpenTK.Mathematics;
 using Color = global::AsciiEngine.Color;
 using Colors = global::AsciiEngine.Colors;
 
@@ -45,10 +42,6 @@ namespace SolarSystemApp
 
         private readonly RenderMode _renderMode;
         private GpuRenderer? _gpuRenderer;
-        private ModernSystemRenderer? _modernRenderer;
-        private int _uiOverlayTexture;
-        private int _uiOverlayWidth;
-        private int _uiOverlayHeight;
 
         private bool _smoothCam = true;
         private double _panResponsiveness = 14.0;
@@ -258,48 +251,8 @@ namespace SolarSystemApp
         public void Draw(PixelEngineContext ctx)
         {
             PixelRenderer renderer = ctx.Renderer;
-            if (_renderMode == RenderMode.Gpu && !_galaxyView)
-            {
-                renderer.Clear(Color.FromRgb(0, 0, 0), 0);
-                renderer.DrawAlpha = 255;
-
-                _centerX = ctx.Width / 2;
-                _centerY = ctx.Height / 2;
-
-                if (_sys == null)
-                {
-                    DrawText(renderer, 4, 4, "NO SYSTEM", Colors.BrightWhite);
-                    return;
-                }
-
-                DrawPlanetLabels(renderer);
-                DrawSelection(renderer);
-
-                int sunX = WorldToScreenX(0.0);
-                int sunY = WorldToScreenY(0.0);
-
-                bool isBlackHole = IsBlackHoleSystem(_sys, _systemIndex);
-                if (_fxEnabled && _fxLensFlare && _sys.HasStar && !isBlackHole)
-                    DrawSunFlare(renderer, sunX, sunY, _centerX, _centerY, _fxFlareStrength, _simTime);
-
-                DrawUi(renderer, ctx);
-
-                EnsureModernRenderer();
-                EnsureOverlayTexture(ctx.Width, ctx.Height, renderer.BufferArray);
-
-                if (_modernRenderer != null)
-                {
-                    _modernRenderer.BeginFrame(ctx.Width, ctx.Height, new Vector2((float)_camWX, (float)_camWY), (float)_worldToScreen, (float)_orbitYScale);
-                    _modernRenderer.QueueFramePrep(_sys, _simTime, _showOrbits, _showBelts, _showRings, _showDebris, _showStarfield, _showNebula);
-                    _modernRenderer.RenderWorld(_simTime);
-                    _modernRenderer.ApplyPostProcess(_uiOverlayTexture);
-                    renderer.SetExternalTexture(_modernRenderer.OutputTextureId, ctx.Width, ctx.Height);
-                }
-
-                return;
-            }
-
-            renderer.ClearExternalTexture();
+            if (_renderMode == RenderMode.CpuPixel)
+                renderer.ClearExternalTexture();
             renderer.Clear(Color.FromRgb(6, 8, 16));
 
             _centerX = ctx.Width / 2;
@@ -347,8 +300,15 @@ namespace SolarSystemApp
 
             DrawStations(renderer);
 
-            BuildOccluders();
-            DrawPlanets(renderer, _occluders, _occluderDepths);
+            if (_renderMode == RenderMode.Gpu)
+            {
+                DrawPlanetLabels(renderer);
+            }
+            else
+            {
+                BuildOccluders();
+                DrawPlanets(renderer, _occluders, _occluderDepths);
+            }
 
             DrawAsteroids(renderer, ctx);
             DrawShips(renderer);
@@ -358,6 +318,19 @@ namespace SolarSystemApp
                 DrawSunFlare(renderer, sunX, sunY, _centerX, _centerY, _fxFlareStrength, _simTime);
 
             DrawUi(renderer, ctx);
+
+            if (_renderMode == RenderMode.Gpu)
+            {
+                EnsureGpuRenderer();
+                if (_gpuRenderer != null)
+                {
+                    _gpuRenderer.BeginFrame(ctx.Width, ctx.Height, 0f, 0f, 0f);
+                    _gpuRenderer.DrawBackground(renderer.BufferArray, ctx.Width, ctx.Height);
+                    DrawPlanetsGpu(ctx, _gpuRenderer);
+                    _gpuRenderer.EndFrame();
+                    renderer.SetExternalTexture(_gpuRenderer.OutputTextureId, ctx.Width, ctx.Height);
+                }
+            }
         }
 
         private void HandleInput(PixelEngineContext ctx)
@@ -1098,42 +1071,11 @@ namespace SolarSystemApp
                 _gpuRenderer = new GpuRenderer();
         }
 
-        private void EnsureModernRenderer()
-        {
-            if (_modernRenderer == null)
-                _modernRenderer = new ModernSystemRenderer();
-        }
-
-        private void EnsureOverlayTexture(int width, int height, byte[] pixels)
-        {
-            if (_uiOverlayTexture == 0)
-                _uiOverlayTexture = GL.GenTexture();
-
-            if (_uiOverlayWidth != width || _uiOverlayHeight != height)
-            {
-                _uiOverlayWidth = width;
-                _uiOverlayHeight = height;
-                GL.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
-                GL.BindTexture(TextureTarget.Texture2D, _uiOverlayTexture);
-                GL.TexImage2D(TextureTarget.Texture2D, 0, PixelInternalFormat.Rgba8, _uiOverlayWidth, _uiOverlayHeight, 0, PixelFormat.Rgba, PixelType.UnsignedByte, pixels);
-                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMinFilter, (int)TextureMinFilter.Nearest);
-                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureMagFilter, (int)TextureMagFilter.Nearest);
-                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapS, (int)TextureWrapMode.ClampToEdge);
-                GL.TexParameter(TextureTarget.Texture2D, TextureParameterName.TextureWrapT, (int)TextureWrapMode.ClampToEdge);
-            }
-            else
-            {
-                GL.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
-                GL.BindTexture(TextureTarget.Texture2D, _uiOverlayTexture);
-                GL.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, _uiOverlayWidth, _uiOverlayHeight, PixelFormat.Rgba, PixelType.UnsignedByte, pixels);
-            }
-        }
-
         private static RenderMode GetInitialRenderMode()
         {
             string? env = Environment.GetEnvironmentVariable("SOLAR_RENDER_MODE");
             if (string.IsNullOrWhiteSpace(env))
-                return RenderMode.Gpu;
+                return RenderMode.CpuPixel;
 
             env = env.Trim();
             if (env.Equals("gpu", StringComparison.OrdinalIgnoreCase))
