@@ -71,7 +71,8 @@ namespace AsciiEngine
                 UpdateQuadVertices(windowW, windowH);
             }
 
-            EnsureTexture(src);
+            if (!src.UseExternalTexture)
+                EnsureTexture(src);
 
             GL.Viewport(0, 0, windowW, windowH);
             GL.ClearColor(0f, 0f, 0f, 1f);
@@ -80,15 +81,18 @@ namespace AsciiEngine
             GL.UseProgram(_program);
             GL.Uniform2(_resolutionUniform, (float)windowW, (float)windowH);
             GL.ActiveTexture(TextureUnit.Texture0);
-            GL.BindTexture(TextureTarget.Texture2D, _textureId);
+            GL.BindTexture(TextureTarget.Texture2D, src.UseExternalTexture ? src.ExternalTextureId : _textureId);
             GL.Uniform1(_textureUniform, 0);
 
             GL.BindVertexArray(_vao);
             GL.BindBuffer(BufferTarget.ArrayBuffer, _vbo);
             GL.BufferData(BufferTarget.ArrayBuffer, _quadVertices.Length * sizeof(float), _quadVertices, BufferUsageHint.DynamicDraw);
 
-            GL.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
-            GL.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, src.Width, src.Height, PixelFormat.Rgba, PixelType.UnsignedByte, src.Buffer);
+            if (!src.UseExternalTexture)
+            {
+                GL.PixelStore(PixelStoreParameter.UnpackAlignment, 1);
+                GL.TexSubImage2D(TextureTarget.Texture2D, 0, 0, 0, src.Width, src.Height, PixelFormat.Rgba, PixelType.UnsignedByte, src.Buffer);
+            }
 
             GL.DrawArrays(PrimitiveType.Triangles, 0, 6);
 
@@ -201,6 +205,14 @@ namespace AsciiEngine
             EnsureTexture(src);
 
             _initialized = true;
+        }
+
+        public void EnsureInitialized(PixelRenderer src)
+        {
+            if (_disposed) throw new ObjectDisposedException(nameof(SdlGlPixelPresenter));
+            if (src == null) throw new ArgumentNullException(nameof(src));
+            if (!_initialized)
+                Initialize(src);
         }
 
         private void EnsureTexture(PixelRenderer src)

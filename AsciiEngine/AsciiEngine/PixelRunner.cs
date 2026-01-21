@@ -22,9 +22,10 @@ namespace AsciiEngine
                 Diagnostics.Log(AsciiCapabilities.DescribePresenter(presenter.GetType().Name, renderer.Width, renderer.Height));
                 Diagnostics.Log($"[AsciiEngine] PixelBuffer: size={renderer.Width}x{renderer.Height}, bufferLen={renderer.BufferLength}.");
 
-                app.Init(ctx);
-
                 var sdlPresenter = presenter as SdlGlPixelPresenter;
+                sdlPresenter?.EnsureInitialized(ctx.Renderer);
+
+                app.Init(ctx);
 
                 while (!terminal.ExitRequested)
                 {
