@@ -15,7 +15,7 @@ namespace SolarSystemApp
         private const double SimStep = 1.0 / 60.0;
         private const double ZoomStep = 1.12;
         private const int StarCount = 220;
-        private const double StarSpan = 120.0;
+        private const double StarSpan = 180.0;
         private const int DebrisCount = 30;
         private const double DebrisSpan = 128.0;
         private const double DebrisMaxV = 0.22;
@@ -222,7 +222,7 @@ namespace SolarSystemApp
 
         public void Init(PixelEngineContext ctx)
         {
-            _galaxy.Build(seed: 12345, count: 100);
+            _galaxy.Build(seed: 12345, count: 500);
 
             if (_galaxy.Systems.Count > 0)
             {

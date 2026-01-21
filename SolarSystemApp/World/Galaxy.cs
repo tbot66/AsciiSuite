@@ -39,8 +39,8 @@ namespace SolarSystemApp.World
                 sys.Seed = seed + i * 999;
 
                 // Position in galaxy map
-                sys.GalaxyX = (rng.NextDouble() * 2.0 - 1.0) * 20.0;
-                sys.GalaxyY = (rng.NextDouble() * 2.0 - 1.0) * 10.0;
+                sys.GalaxyX = (rng.NextDouble() * 2.0 - 1.0) * 40.0;
+                sys.GalaxyY = (rng.NextDouble() * 2.0 - 1.0) * 20.0;
 
                 // NEW: choose system kind (weighted)
                 sys.Kind = StarSystemLogic.PickSystemKind(seed, i);
