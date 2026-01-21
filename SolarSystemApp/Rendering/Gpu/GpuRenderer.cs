@@ -67,6 +67,7 @@ namespace SolarSystemApp.Rendering.Gpu
         private float _legacyClearR;
         private float _legacyClearG;
         private float _legacyClearB;
+        private RenderMode _renderMode = RenderMode.Ortho2D;
 
         public int OutputTextureId => _finalColorTex;
 
@@ -210,6 +211,35 @@ namespace SolarSystemApp.Rendering.Gpu
             int overlayWidth,
             int overlayHeight)
         {
+            RenderFrameInternal(width, height, viewProj, time, frame, overlayBuffer, overlayWidth, overlayHeight, RenderMode.Ortho2D);
+        }
+
+        internal void RenderFrame3D(
+            int width,
+            int height,
+            Camera3D camera,
+            float time,
+            RenderFrameData frame,
+            byte[]? overlayBuffer,
+            int overlayWidth,
+            int overlayHeight)
+        {
+            Matrix4 viewProj = camera.Projection * camera.View;
+            RenderFrameInternal(width, height, viewProj, time, frame, overlayBuffer, overlayWidth, overlayHeight, RenderMode.Perspective3D);
+        }
+
+        private void RenderFrameInternal(
+            int width,
+            int height,
+            Matrix4 viewProj,
+            float time,
+            RenderFrameData frame,
+            byte[]? overlayBuffer,
+            int overlayWidth,
+            int overlayHeight,
+            RenderMode mode)
+        {
+            _renderMode = mode;
             EnsureTargets(width, height);
             UpdateOverlayTexture(overlayBuffer, overlayWidth, overlayHeight);
 
@@ -747,6 +777,12 @@ namespace SolarSystemApp.Rendering.Gpu
             Debris,
             Asteroid,
             Ship
+        }
+
+        internal enum RenderMode
+        {
+            Ortho2D,
+            Perspective3D
         }
 
         private struct DynamicBuffer
