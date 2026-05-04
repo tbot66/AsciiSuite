@@ -201,8 +201,8 @@ namespace SolarSystemApp.World
                         tyN = y2;
                     }
 
-                    double ndotlRaw = nxN * lx + nyN * ly + nzN * 0.72;
-                    double ndotl01 = SmoothStep(-0.18, 0.88, ndotlRaw);
+                    double ndotlRaw = nxN * lx + nyN * ly + nzN * 0.12;
+                    double ndotl01 = SmoothStep(-0.08, 0.72, ndotlRaw);
 
                     double limb = 0.78 + 0.22 * nzN;
                     ndotl01 *= limb;
@@ -333,8 +333,8 @@ namespace SolarSystemApp.World
 
                     double nz = Math.Sqrt(Math.Max(0.0, 1.0 - rr));
 
-                    double ndotlRaw = nx * lx + ny * ly + nz * 0.72;
-                    double ndotl01 = SmoothStep(-0.18, 0.88, ndotlRaw);
+                    double ndotlRaw = nx * lx + ny * ly + nz * 0.12;
+                    double ndotl01 = SmoothStep(-0.08, 0.72, ndotlRaw);
                     double limb = 0.80 + 0.20 * nz;
                     ndotl01 *= limb;
 
@@ -696,6 +696,24 @@ namespace SolarSystemApp.World
             out char glyph)
         {
             SamplePlanetEx(seed, tex, nx, ny, nz, spinTurns, out fg, out glyph, out _, out _);
+        }
+
+        /// <summary>
+        /// Bridge for TextureGenerator to call the existing texture sampling logic.
+        /// Same as SamplePlanetEx but with internal visibility.
+        /// </summary>
+        internal static void SamplePlanetForCache(
+            int seed,
+            PlanetTexture tex,
+            double nx, double ny, double nz,
+            double spinTurns,
+            out Color fg,
+            out char glyph,
+            out double emissive01,
+            out Color emissiveColor)
+        {
+            SamplePlanetEx(seed, tex, nx, ny, nz, spinTurns,
+                out fg, out glyph, out emissive01, out emissiveColor);
         }
 
         private static void SamplePlanetEx(
