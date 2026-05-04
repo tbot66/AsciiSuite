@@ -1,0 +1,12 @@
+# Build output
+bin/
+obj/
+
+# IDE
+.vs/
+
+# Texture cache (generated, machine-specific)
+cache/
+
+# Superpowers brainstorm sessions
+.superpowers/
