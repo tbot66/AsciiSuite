@@ -46,6 +46,11 @@ namespace SolarSystemApp
 
         private readonly Camera2D _cam = new Camera2D();
 
+        // Texture caching
+        private TextureCache? _textureCache;
+        private TextureGenerator? _textureGenerator;
+        private const int TextureMaxWidth = 1024;
+
         // Follow selection
         private bool _follow = false;
         private double _followLerp = 0.18;
@@ -407,6 +412,12 @@ namespace SolarSystemApp
             var vp = _uiManager.ViewportRect;
             _cam.CenterX = vp.X + vp.W / 2;
             _cam.CenterY = vp.Y + vp.H / 2;
+
+            string cacheRoot = Path.Combine(AppContext.BaseDirectory, "cache", "textures");
+            _textureCache = new TextureCache(TextureMaxWidth, cacheRoot);
+            _textureGenerator = new TextureGenerator(_textureCache);
+            PlanetDrawer.Cache = _textureCache;
+            PreloadSystemTextures();
 
             _events.Add(_simTime, $"Entered system: {_sys.Name}");
         }
@@ -2228,6 +2239,7 @@ namespace SolarSystemApp
                 bool inView = CircleIntersectsScreen(px, py, pr, r.Width, r.Height);
                 bool allowLod = !inView;
 
+                PlanetDrawer._currentBodyIndex = i;
                 PlanetDrawer.DrawPlanet(r, px, py, pr, _sys.Seed, p, _simTime, sunX, sunY, occluders, allowLod);
 
                 p.Texture = oldTex;
@@ -2290,6 +2302,7 @@ namespace SolarSystemApp
                     bool inView = CircleIntersectsScreen(mx, my, mr, r.Width, r.Height);
                     bool allowLod = !inView;
 
+                    PlanetDrawer._currentBodyIndex = 1000 + pi * 100 + mi;
                     PlanetDrawer.DrawMoon(r, mx, my, mr, _sys.Seed, m, _simTime, sunX, sunY, occluders, allowLod);
 
                     if (_showLabels)
@@ -2784,6 +2797,108 @@ namespace SolarSystemApp
         // =========================
         // Systems
         // =========================
+        private void PreloadSystemTextures()
+        {
+            if (_textureCache == null || _textureGenerator == null || _sys == null)
+                return;
+
+            _textureCache.SetContext(_galaxy.Seed, _systemIndex);
+            _textureGenerator.SetContext(_galaxy.Seed, _systemIndex);
+
+            for (int i = 0; i < _sys.Planets.Count; i++)
+            {
+                var planet = _sys.Planets[i];
+                int pSeed = _sys.Seed ^ (planet.Name?.GetHashCode() ?? 0);
+                int bodyIdx = i;
+                string key = TextureCache.MakeKey(_galaxy.Seed, _systemIndex, bodyIdx,
+                    (int)planet.Texture, pSeed);
+
+                int highest = _textureCache.LoadFromDisk(key, _galaxy.Seed, _systemIndex, bodyIdx);
+
+                if (highest < 0)
+                {
+                    GenerateTier0Sync(key, pSeed, planet.Texture, bodyIdx, planet.AxisTilt);
+                    highest = 0;
+                }
+
+                _textureGenerator.RequestAllMissing(key, highest,
+                    pSeed, planet.Texture, bodyIdx,
+                    _galaxy.Seed, _systemIndex, planet.AxisTilt);
+
+                for (int mi = 0; mi < planet.Moons.Count; mi++)
+                {
+                    var moon = planet.Moons[mi];
+                    int mSeed = _sys.Seed ^ (moon.Name?.GetHashCode() ?? 0);
+                    int mBodyIdx = 1000 + i * 100 + mi;
+                    string mKey = TextureCache.MakeKey(_galaxy.Seed, _systemIndex, mBodyIdx,
+                        (int)moon.Texture, mSeed);
+
+                    int mHighest = _textureCache.LoadFromDisk(mKey, _galaxy.Seed, _systemIndex, mBodyIdx);
+
+                    if (mHighest < 0)
+                    {
+                        GenerateTier0Sync(mKey, mSeed, moon.Texture, mBodyIdx, 0.0);
+                        mHighest = 0;
+                    }
+
+                    _textureGenerator.RequestAllMissing(mKey, mHighest,
+                        mSeed, moon.Texture, mBodyIdx,
+                        _galaxy.Seed, _systemIndex, 0.0);
+                }
+            }
+        }
+
+        private void GenerateTier0Sync(string bodyKey, int bodySeed,
+            PlanetDrawer.PlanetTexture texture, int bodyIndex, double axisTilt)
+        {
+            var (w, h) = _textureCache!.TierSize(0);
+            var map = new EquirectMap(w, h);
+
+            for (int py = 0; py < h; py++)
+            {
+                for (int px = 0; px < w; px++)
+                {
+                    double u = (px + 0.5) / w;
+                    double v = (py + 0.5) / h;
+
+                    double lon = (u - 0.5) * Math.PI * 2.0;
+                    double lat = (v - 0.5) * Math.PI;
+                    double cosLat = Math.Cos(lat);
+                    double nx = Math.Sin(lon) * cosLat;
+                    double ny = Math.Sin(lat);
+                    double nz = Math.Cos(lon) * cosLat;
+
+                    if (Math.Abs(axisTilt) > 1e-6)
+                    {
+                        double ct = Math.Cos(axisTilt);
+                        double st = Math.Sin(axisTilt);
+                        double x2 = nx * ct - ny * st;
+                        double y2 = nx * st + ny * ct;
+                        nx = x2;
+                        ny = y2;
+                    }
+
+                    PlanetDrawer.SamplePlanetForCache(bodySeed, texture, nx, ny, nz, 0.0,
+                        out Color fg, out char glyph,
+                        out double emissive01, out Color emissiveColor);
+
+                    int packed = fg.Value;
+                    byte r = (byte)((packed >> 16) & 0xFF);
+                    byte g = (byte)((packed >> 8) & 0xFF);
+                    byte b = (byte)(packed & 0xFF);
+
+                    int emPacked = emissiveColor.Value;
+                    byte emR = (byte)((emPacked >> 16) & 0xFF);
+                    byte emG = (byte)((emPacked >> 8) & 0xFF);
+                    byte emB = (byte)(emPacked & 0xFF);
+
+                    map.SetTexel(px, py, r, g, b, glyph, emissive01, emR, emG, emB);
+                }
+            }
+
+            _textureCache.InstallTier(bodyKey, 0, map);
+        }
+
         private void SetActiveSystem(int index, bool resetSimTime)
         {
             if (_galaxy.Systems.Count == 0) return;
@@ -2809,6 +2924,7 @@ namespace SolarSystemApp
 
             StarSystemLogic.UpdateCelestials(_sys, _simTime, _useKepler);
             RebuildSelection();
+            PreloadSystemTextures();
         }
 
         private const double BeltChance = 0.55;
