@@ -82,6 +82,7 @@ namespace SolarSystemApp.World
 
         public double RadiusWorld;
         public double SpinSpeed;
+        public double AxisTilt;
 
         public AnsiColor Fg;
 

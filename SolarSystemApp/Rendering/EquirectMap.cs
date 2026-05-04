@@ -103,7 +103,7 @@ namespace SolarSystemApp.Rendering
                 _emissiveRgb[i00 + 2] * w00 + _emissiveRgb[i10 + 2] * w10 + _emissiveRgb[i01 + 2] * w01 + _emissiveRgb[i11 + 2] * w11, 0, 255);
         }
 
-        private const byte FormatVersion = 1;
+        private const byte FormatVersion = 2;
 
         public void WriteToDisk(string path)
         {

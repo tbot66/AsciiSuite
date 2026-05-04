@@ -386,6 +386,21 @@ namespace SolarSystemApp.World
 
                     double lit = MathUtil.Clamp(ndotl01 * shadowMul, 0.0, 1.0);
 
+                    double txN = nx;
+                    double tyN = ny;
+                    double tzN = nz;
+
+                    double tilt = m.AxisTilt;
+                    if (Math.Abs(tilt) > 1e-6)
+                    {
+                        double ct = Math.Cos(tilt);
+                        double st = Math.Sin(tilt);
+                        double x2 = txN * ct - tyN * st;
+                        double y2 = txN * st + tyN * ct;
+                        txN = x2;
+                        tyN = y2;
+                    }
+
                     Color fg = default;
                     char texGlyph = ' ';
 
@@ -398,11 +413,11 @@ namespace SolarSystemApp.World
                         var tier = Cache.GetBestTier(bodyKey, radChars * 2);
                         if (tier != null)
                         {
-                            double lon = Math.Atan2(nx, nz);
+                            double lon = Math.Atan2(txN, tzN);
                             double cacheU = lon / (Math.PI * 2.0) + 0.5;
                             cacheU = Frac(cacheU);
                             cacheU = Frac(cacheU + spinTurns);
-                            double cacheV = Math.Asin(MathUtil.Clamp(ny, -1.0, 1.0)) / Math.PI + 0.5;
+                            double cacheV = Math.Asin(MathUtil.Clamp(tyN, -1.0, 1.0)) / Math.PI + 0.5;
 
                             tier.Sample(cacheU, cacheV,
                                 out byte cr, out byte cg, out byte cb,
@@ -415,7 +430,7 @@ namespace SolarSystemApp.World
 
                     if (!usedCache)
                     {
-                        SamplePlanet(mSeed, m.Texture, nx, ny, nz, spinTurns,
+                        SamplePlanet(mSeed, m.Texture, txN, tyN, tzN, spinTurns,
                             out fg, out texGlyph);
                     }
 

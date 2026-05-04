@@ -479,7 +479,8 @@ namespace SolarSystemApp.World
                 LocalPeriod = 6.0,
                 LocalPhase = 0.0,
                 RadiusWorld = 0.12,
-                SpinSpeed = 0.0,
+                SpinSpeed = 0.4,
+                AxisTilt = 0.0,
                 Fg = AnsiColor.BrightWhite,
                 Texture = PlanetDrawer.PlanetTexture.Rocky
             });
@@ -595,6 +596,10 @@ namespace SolarSystemApp.World
 
                     var mTex = PickMoonTexture(rng, coldZone);
 
+                    double moonSpin = rng.NextDouble() < 0.70
+                        ? (0.3 + rng.NextDouble() * 1.7)
+                        : 0.0;
+
                     p.Moons.Add(new Moon
                     {
                         Name = $"Moon-{m + 1}",
@@ -602,7 +607,8 @@ namespace SolarSystemApp.World
                         LocalPeriod = localPeriod,
                         LocalPhase = localPhase,
                         RadiusWorld = moonRadius,
-                        SpinSpeed = 0.0,
+                        SpinSpeed = moonSpin,
+                        AxisTilt = 0.0,
                         Fg = AnsiColor.BrightWhite,
                         Texture = mTex
                     });
@@ -663,6 +669,18 @@ namespace SolarSystemApp.World
                 if (deg > 110.0) deg = 110.0;
 
                 p.AxisTilt = deg * (Math.PI / 180.0);
+
+                for (int mi = 0; mi < p.Moons.Count; mi++)
+                {
+                    Moon moon = p.Moons[mi];
+                    int mSeed = pSeed ^ (moon.Name?.GetHashCode() ?? mi * 7919);
+
+                    double mu = HashNoise.Hash01(mSeed, 8801, 8902);
+                    double mv = HashNoise.Hash01(mSeed, 8703, 8604);
+
+                    double mDeg = mu < 0.30 ? 0.0 : mv * 25.0;
+                    moon.AxisTilt = mDeg * (Math.PI / 180.0);
+                }
             }
         }
 
