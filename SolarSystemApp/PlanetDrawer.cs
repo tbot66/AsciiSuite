@@ -1,6 +1,7 @@
 ﻿using System;
 using AsciiEngine;
 using SolarSystemApp.Util;
+using SolarSystemApp.Rendering;
 
 namespace SolarSystemApp.World
 {
@@ -50,6 +51,8 @@ namespace SolarSystemApp.World
         private const double AtmosphereMax = 0.35;
         private static readonly Dictionary<int, int> _planetStepCache = new();
         private static readonly Dictionary<int, int> _moonStepCache = new();
+        internal static TextureCache? Cache;
+        internal static int _currentBodyIndex;
 
         private static double ClampZ(double z)
         {
@@ -216,9 +219,45 @@ namespace SolarSystemApp.World
 
                     double lit = MathUtil.Clamp(ndotl01 * shadowMul, 0.0, 1.0);
 
-                    SamplePlanetEx(pSeed, p.Texture, txN, tyN, tzN, spinTurns,
-                        out Color fg, out char texGlyph,
-                        out double emissive01, out Color emissiveColor);
+                    Color fg = default;
+                    char texGlyph = ' ';
+                    double emissive01 = 0.0;
+                    Color emissiveColor = default;
+
+                    bool usedCache = false;
+                    if (Cache != null)
+                    {
+                        string bodyKey = TextureCache.MakeKey(
+                            Cache._galaxySeed, Cache._systemIndex, _currentBodyIndex,
+                            (int)p.Texture, pSeed);
+                        var tier = Cache.GetBestTier(bodyKey, radChars * 2);
+                        if (tier != null)
+                        {
+                            // Reconstruct u,v from the tilted normal (same math as SamplePlanetEx lines 714-718)
+                            double lon = Math.Atan2(txN, tzN);
+                            double cacheU = lon / (Math.PI * 2.0) + 0.5;
+                            cacheU = Frac(cacheU);
+                            // Apply rotation offset
+                            cacheU = Frac(cacheU + spinTurns);
+                            double cacheV = Math.Asin(MathUtil.Clamp(tyN, -1.0, 1.0)) / Math.PI + 0.5;
+
+                            tier.Sample(cacheU, cacheV,
+                                out byte cr, out byte cg, out byte cb,
+                                out texGlyph,
+                                out emissive01,
+                                out byte emR, out byte emG, out byte emB);
+                            fg = Color.FromRgb(cr, cg, cb);
+                            emissiveColor = Color.FromRgb(emR, emG, emB);
+                            usedCache = true;
+                        }
+                    }
+
+                    if (!usedCache)
+                    {
+                        SamplePlanetEx(pSeed, p.Texture, txN, tyN, tzN, spinTurns,
+                            out fg, out texGlyph,
+                            out emissive01, out emissiveColor);
+                    }
 
                     double rim = Math.Pow(MathUtil.Clamp(1.0 - nzN, 0.0, 1.0), 1.8);
                     double rimBoost = (ndotlRaw > -0.05) ? (0.10 * rim) : (0.04 * rim);
@@ -347,7 +386,38 @@ namespace SolarSystemApp.World
 
                     double lit = MathUtil.Clamp(ndotl01 * shadowMul, 0.0, 1.0);
 
-                    SamplePlanet(mSeed, m.Texture, nx, ny, nz, spinTurns, out Color fg, out char texGlyph);
+                    Color fg = default;
+                    char texGlyph = ' ';
+
+                    bool usedCache = false;
+                    if (Cache != null)
+                    {
+                        string bodyKey = TextureCache.MakeKey(
+                            Cache._galaxySeed, Cache._systemIndex, _currentBodyIndex,
+                            (int)m.Texture, mSeed);
+                        var tier = Cache.GetBestTier(bodyKey, radChars * 2);
+                        if (tier != null)
+                        {
+                            double lon = Math.Atan2(nx, nz);
+                            double cacheU = lon / (Math.PI * 2.0) + 0.5;
+                            cacheU = Frac(cacheU);
+                            cacheU = Frac(cacheU + spinTurns);
+                            double cacheV = Math.Asin(MathUtil.Clamp(ny, -1.0, 1.0)) / Math.PI + 0.5;
+
+                            tier.Sample(cacheU, cacheV,
+                                out byte cr, out byte cg, out byte cb,
+                                out texGlyph,
+                                out _, out _, out _, out _);
+                            fg = Color.FromRgb(cr, cg, cb);
+                            usedCache = true;
+                        }
+                    }
+
+                    if (!usedCache)
+                    {
+                        SamplePlanet(mSeed, m.Texture, nx, ny, nz, spinTurns,
+                            out fg, out texGlyph);
+                    }
 
                     fg = ShadeColorForLight(fg, lit, stronger: true);
 
