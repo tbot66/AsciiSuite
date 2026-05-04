@@ -413,6 +413,7 @@ namespace SolarSystemApp
             _cam.CenterX = vp.X + vp.W / 2;
             _cam.CenterY = vp.Y + vp.H / 2;
 
+            _textureGenerator?.Dispose();
             string cacheRoot = Path.Combine(AppContext.BaseDirectory, "cache", "textures");
             _textureCache = new TextureCache(TextureMaxWidth, cacheRoot);
             _textureGenerator = new TextureGenerator(_textureCache);
