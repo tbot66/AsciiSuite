@@ -172,19 +172,7 @@ namespace SolarSystemApp.Rendering
                     double ny = Math.Sin(lat);
                     double nz = Math.Cos(lon) * cosLat;
 
-                    // Apply axis tilt (same rotation as PlanetDrawer lines 193-202)
-                    double tilt = req.AxisTilt;
-                    if (Math.Abs(tilt) > 1e-6)
-                    {
-                        double ct = Math.Cos(tilt);
-                        double st = Math.Sin(tilt);
-                        double x2 = nx * ct - ny * st;
-                        double y2 = nx * st + ny * ct;
-                        nx = x2;
-                        ny = y2;
-                    }
-
-                    // Call existing texture sampling (spinTurns=0, rotation applied at render time)
+                    // Tilt is NOT applied here — the renderer applies it at sample time
                     PlanetDrawer.SamplePlanetForCache(req.BodySeed, req.Texture, nx, ny, nz, 0.0,
                         out Color fg, out char glyph,
                         out double emissive01, out Color emissiveColor);

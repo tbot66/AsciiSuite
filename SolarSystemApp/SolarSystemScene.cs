@@ -2818,7 +2818,7 @@ namespace SolarSystemApp
 
                 if (highest < 0)
                 {
-                    GenerateTier0Sync(key, pSeed, planet.Texture, bodyIdx, planet.AxisTilt);
+                    GenerateTier0Sync(key, pSeed, planet.Texture, bodyIdx);
                     highest = 0;
                 }
 
@@ -2838,7 +2838,7 @@ namespace SolarSystemApp
 
                     if (mHighest < 0)
                     {
-                        GenerateTier0Sync(mKey, mSeed, moon.Texture, mBodyIdx, 0.0);
+                        GenerateTier0Sync(mKey, mSeed, moon.Texture, mBodyIdx);
                         mHighest = 0;
                     }
 
@@ -2850,7 +2850,7 @@ namespace SolarSystemApp
         }
 
         private void GenerateTier0Sync(string bodyKey, int bodySeed,
-            PlanetDrawer.PlanetTexture texture, int bodyIndex, double axisTilt)
+            PlanetDrawer.PlanetTexture texture, int bodyIndex)
         {
             var (w, h) = _textureCache!.TierSize(0);
             var map = new EquirectMap(w, h);
@@ -2869,16 +2869,7 @@ namespace SolarSystemApp
                     double ny = Math.Sin(lat);
                     double nz = Math.Cos(lon) * cosLat;
 
-                    if (Math.Abs(axisTilt) > 1e-6)
-                    {
-                        double ct = Math.Cos(axisTilt);
-                        double st = Math.Sin(axisTilt);
-                        double x2 = nx * ct - ny * st;
-                        double y2 = nx * st + ny * ct;
-                        nx = x2;
-                        ny = y2;
-                    }
-
+                    // Tilt is NOT applied here — the renderer applies it at sample time
                     PlanetDrawer.SamplePlanetForCache(bodySeed, texture, nx, ny, nz, 0.0,
                         out Color fg, out char glyph,
                         out double emissive01, out Color emissiveColor);
